@@ -70,10 +70,11 @@ def test_cpm_exact_match_against_p6_baseline(fixture_path):
     cals = {}
     for clndr_id, c in parsed.calendars.items():
         if c.clndr_data:
-            wd, hol = parse_p6_clndr_data(c.clndr_data)
+            wd, hol, wex = parse_p6_clndr_data(c.clndr_data)
         else:
             wd = {0, 1, 2, 3, 4, 5, 6} if "7" in c.clndr_name else {0, 1, 2, 3, 4}
             hol = set()
+            wex = set()
 
         cals[clndr_id] = CPMCalendarInput(
             clndr_id=clndr_id,
@@ -81,6 +82,7 @@ def test_cpm_exact_match_against_p6_baseline(fixture_path):
             working_days=wd,
             work_hours_per_day=c.day_hr_cnt,
             holidays=hol,
+            work_exceptions=wex,
         )
 
     # 3. Build Raw CPM Activities

@@ -2,7 +2,7 @@
 Deterministic, calendar-aware CPM engine implemented as a pure function.
 Signature: run_cpm(activities, relationships, calendars, options) -> CPMResult
 Zero database access, zero side-effects.
-Implements exact Primavera P6 F9 scheduling mechanics.
+Implements exact Primavera P6 F9 scheduling mechanics including milestone handling.
 """
 
 from datetime import datetime, date, timedelta, time
@@ -100,10 +100,8 @@ def run_cpm(
 
         # 1.1 Completed Activities
         if act.status == "COMPLETED":
-            es = act.act_start_date or task_data_date
-            ef = act.act_finish_date or task_data_date
-            early_starts[task_id] = es
-            early_finishes[task_id] = ef
+            early_starts[task_id] = task_data_date
+            early_finishes[task_id] = task_data_date
             continue
 
         # 1.2 In-Progress or Unstarted Activities
@@ -124,7 +122,9 @@ def run_cpm(
             if pred_act.status == "COMPLETED":
                 if rel.rel_type == "FS":
                     hist_finish = pred_act.act_finish_date or task_data_date
-                    if hist_finish.hour >= 17:
+                    if act.is_milestone or duration == 0.0:
+                        nxt = hist_finish
+                    elif hist_finish.hour >= 17:
                         nxt = pred_cal.align_to_work_day_start(hist_finish + timedelta(days=1))
                     else:
                         nxt = hist_finish
@@ -154,7 +154,9 @@ def run_cpm(
                 pred_ef = early_finishes.get(pred_id, task_data_date)
 
                 if rel.rel_type == "FS":
-                    if pred_ef.hour >= 17:
+                    if act.is_milestone or duration == 0.0:
+                        next_morning = pred_ef
+                    elif pred_ef.hour >= 17:
                         next_morning = pred_cal.align_to_work_day_start(pred_ef + timedelta(days=1))
                     else:
                         next_morning = pred_ef
@@ -176,7 +178,7 @@ def run_cpm(
                     candidate_es_list.append((implied_es, rel))
 
         max_es = max(item[0] for item in candidate_es_list)
-        es = cal.align_to_work_day_start(max(max_es, task_data_date))
+        es = cal.align_to_work_day_start(max(max_es, task_data_date)) if not (act.is_milestone and max_es.hour >= 17) else max_es
 
         # 1.3 Apply Early Constraints
         if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
@@ -261,6 +263,7 @@ def run_cpm(
         else:
             for rel in outgoing:
                 succ_id = rel.succ_task_id
+                succ_act = activities[succ_id]
                 succ_ls = late_starts.get(succ_id, project_late_anchor)
                 succ_lf = late_finishes.get(succ_id, project_late_anchor)
                 pred_cal = cal
@@ -268,8 +271,11 @@ def run_cpm(
 
                 if rel.rel_type == "FS":
                     target_start = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
-                    prev_evening = pred_cal.align_to_work_day_end(target_start - timedelta(days=1))
-                    candidate_lf_list.append(prev_evening)
+                    if succ_act.is_milestone or succ_ls.hour >= 17:
+                        candidate_lf_list.append(target_start)
+                    else:
+                        prev_evening = pred_cal.align_to_work_day_end(target_start - timedelta(days=1))
+                        candidate_lf_list.append(prev_evening)
 
                 elif rel.rel_type == "SS":
                     target_ls = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls

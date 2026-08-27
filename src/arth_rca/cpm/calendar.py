@@ -9,20 +9,20 @@ import re
 from arth_rca.cpm.types import CPMCalendarInput
 
 
-def parse_p6_clndr_data(clndr_data: Optional[str]) -> Tuple[Set[int], Set[date]]:
+def parse_p6_clndr_data(clndr_data: Optional[str]) -> Tuple[Set[int], Set[date], Set[date]]:
     """
     Parse native Primavera P6 clndr_data blob to extract:
     1. DaysOfWeek working pattern (0=Mon .. 6=Sun)
-    2. Holiday / Exception dates (converted from Windows/Excel serial dates)
+    2. Holiday / Non-work Exceptions
+    3. Extra Work Exceptions (non-working days made working)
     """
     if not clndr_data:
-        return {0, 1, 2, 3, 4}, set()
+        return {0, 1, 2, 3, 4}, set(), set()
 
     working_days: Set[int] = set()
     holidays: Set[date] = set()
+    work_exceptions: Set[date] = set()
     
-    # P6 days: 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday
-    # Python weekday: Monday=0, ..., Sunday=6
     p6_to_py_weekday = {1: 6, 2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5}
 
     for p6_day in range(1, 8):
@@ -33,12 +33,17 @@ def parse_p6_clndr_data(clndr_data: Optional[str]) -> Tuple[Set[int], Set[date]]
     if not working_days:
         working_days = {0, 1, 2, 3, 4}
 
-    # Extract Exceptions (serial date numbers)
-    for serial in re.findall(r'\(d\|(\d+)\)', clndr_data):
-        dt = datetime(1899, 12, 30) + timedelta(days=int(serial))
-        holidays.add(dt.date())
+    # Extract Exceptions
+    for m in re.finditer(r'\(d\|(\d+)\)(.*?)\)', clndr_data, re.DOTALL):
+        serial = int(m.group(1))
+        body = m.group(2)
+        dt = (datetime(1899, 12, 30) + timedelta(days=serial)).date()
+        if "(s|" in body:
+            work_exceptions.add(dt)
+        else:
+            holidays.add(dt)
 
-    return working_days, holidays
+    return working_days, holidays, work_exceptions
 
 
 class CalendarEngine:
@@ -48,10 +53,13 @@ class CalendarEngine:
         self.calendar = calendar
         self.working_days: Set[int] = set(calendar.working_days)  # 0=Mon, 6=Sun
         self.holidays: Set[date] = set(calendar.holidays)
+        self.work_exceptions: Set[date] = set(getattr(calendar, "work_exceptions", set()))
         self.work_hours_per_day = max(1.0, calendar.work_hours_per_day)
 
     def is_work_day(self, dt: date) -> bool:
         """Check if a given calendar date is a working day."""
+        if dt in self.work_exceptions:
+            return True
         if dt in self.holidays:
             return False
         return dt.weekday() in self.working_days
@@ -71,12 +79,7 @@ class CalendarEngine:
         return datetime.combine(curr, time(17, 0))
 
     def add_work_days(self, start_dt: datetime, duration_days: float) -> datetime:
-        """
-        Add work duration to start_dt.
-        For a 1-day task starting Monday 08:00, finish is Monday 17:00.
-        For a 2-day task starting Monday 08:00, finish is Tuesday 17:00.
-        For a 0-day milestone, finish is start_dt.
-        """
+        """Add work duration to start_dt."""
         if duration_days <= 0.0:
             return start_dt
 
@@ -97,10 +100,7 @@ class CalendarEngine:
         return datetime.combine(curr, time(end_hour, 0))
 
     def subtract_work_days(self, end_dt: datetime, duration_days: float) -> datetime:
-        """
-        Subtract work duration from end_dt.
-        For Late Finish on Tuesday 17:00 with 2 days duration, Late Start is Monday 08:00.
-        """
+        """Subtract work duration from end_dt."""
         if duration_days <= 0.0:
             return end_dt
 
@@ -109,8 +109,6 @@ class CalendarEngine:
             curr -= timedelta(days=1)
 
         days_to_sub = int(duration_days)
-        fraction = duration_days - days_to_sub
-
         remaining_hops = max(0, days_to_sub - 1)
         while remaining_hops > 0:
             curr -= timedelta(days=1)

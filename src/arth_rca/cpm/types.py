@@ -67,6 +67,7 @@ class CPMCalendarInput:
     working_days: Set[int] = field(default_factory=lambda: {0, 1, 2, 3, 4})  # 0=Mon..6=Sun
     work_hours_per_day: float = 8.0
     holidays: Set[date] = field(default_factory=set)
+    work_exceptions: Set[date] = field(default_factory=set)
 
 
 @dataclass(frozen=True)

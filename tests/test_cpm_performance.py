@@ -100,13 +100,14 @@ def test_real_production_schedule_performance():
 
     cals = {}
     for cid, c in parsed.calendars.items():
-        wd, hol = parse_p6_clndr_data(c.clndr_data or "")
+        wd, hol, wex = parse_p6_clndr_data(c.clndr_data or "")
         cals[cid] = CPMCalendarInput(
             clndr_id=cid,
             name=c.clndr_name,
             working_days=wd,
             work_hours_per_day=c.day_hr_cnt,
             holidays=hol,
+            work_exceptions=wex,
         )
 
     acts = {}
