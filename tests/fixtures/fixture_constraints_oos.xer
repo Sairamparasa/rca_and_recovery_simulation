@@ -1,0 +1,22 @@
+ERMHDR	8.0	2026-08-27	PROJECT	ADMIN	Constraints and OOS Fixture
+%T	PROJECT
+%F	proj_id	proj_short_name	clndr_id	plan_start_date	plan_end_date	last_recalc_date	f_calc_mode	oos_mode	critical_path_type
+%R	103	CONSTR_OOS	1	2026-11-02 08:00	2026-11-18 17:00	2026-11-04 08:00	CS_Start	PO	TOTAL_FLOAT
+%T	CALENDAR
+%F	clndr_id	clndr_name	default_flag	day_hr_cnt	week_hr_cnt
+%R	1	Standard 5 Day	Y	8.0	40.0
+%T	PROJWBS
+%F	wbs_id	proj_id	wbs_short_name	wbs_name
+%R	1003	103	WBS3	Industrial Area
+%T	TASK
+%F	task_id	proj_id	wbs_id	clndr_id	task_code	task_name	status_code	target_durn_hr_cnt	remain_durn_hr_cnt	early_start_date	early_end_date	late_start_date	late_end_date	total_float_hr_cnt	free_float_hr_cnt	driving_path_flag	cstr_type	cstr_date	act_start_date	act_end_date
+%R	20	103	1003	1	C200	Permit Approval	TK_Complete	16.0	0.0	2026-11-02 08:00	2026-11-03 17:00	2026-11-02 08:00	2026-11-03 17:00	0.0	0.0	Y	CS_START	2026-11-02 08:00	2026-11-02 08:00	2026-11-03 17:00
+%R	21	103	1003	1	C210	Piling Work	TK_Active	32.0	32.0	2026-11-04 08:00	2026-11-09 17:00	2026-11-04 08:00	2026-11-09 17:00	0.0	0.0	Y			2026-11-04 08:00	
+%R	22	103	1003	1	C220	Cap Pouring	TK_NotStart	24.0	24.0	2026-11-10 08:00	2026-11-12 17:00	2026-11-10 08:00	2026-11-12 17:00	0.0	0.0	Y				
+%R	23	103	1003	1	C230	Superstructure	TK_NotStart	32.0	32.0	2026-11-13 08:00	2026-11-18 17:00	2026-11-13 08:00	2026-11-18 17:00	0.0	0.0	Y				
+%T	TASKPRED
+%F	task_pred_id	task_id	pred_task_id	proj_id	pred_type	lag_hr_cnt
+%R	20	21	20	103	PR_FS	0.0
+%R	21	22	21	103	PR_FS	0.0
+%R	22	23	22	103	PR_FS	0.0
+%E

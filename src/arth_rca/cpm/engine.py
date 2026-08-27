@@ -1,0 +1,365 @@
+"""
+Deterministic, calendar-aware CPM engine implemented as a pure function.
+Signature: run_cpm(activities, relationships, calendars, options) -> CPMResult
+Zero database access, zero side-effects.
+"""
+
+from datetime import datetime, date, timedelta, time
+from typing import Dict, List, Set, Optional, Tuple
+import networkx as nx
+
+from arth_rca.cpm.types import (
+    CPMActivityInput,
+    CPMRelationshipInput,
+    CPMCalendarInput,
+    CPMOptions,
+    CPMActivityResult,
+    CPMRelationshipResult,
+    CPMResult,
+    FloatCalcMode,
+    OOSMode,
+    CriticalPathType,
+    DrivingStatus,
+)
+from arth_rca.cpm.calendar import build_calendar_engine_map, CalendarEngine
+
+
+def run_cpm(
+    activities: Dict[int, CPMActivityInput],
+    relationships: List[CPMRelationshipInput],
+    calendars: Dict[int, CPMCalendarInput],
+    options: CPMOptions,
+) -> CPMResult:
+    """
+    Execute deterministic calendar-aware Critical Path Method calculations.
+    Pure function with no side effects or external dependencies.
+    """
+    if not activities:
+        now = options.data_date
+        return CPMResult(
+            activities={},
+            relationships={},
+            project_early_finish=now,
+            project_late_finish=now,
+            longest_path_task_ids=[],
+        )
+
+    cal_map = build_calendar_engine_map(calendars)
+    default_cal = next(iter(cal_map.values()))
+
+    # Build NetworkX graph for topological ordering
+    graph = nx.DiGraph()
+    for task_id in activities.keys():
+        graph.add_node(task_id)
+
+    # Group relationships by predecessor and successor
+    succ_rels: Dict[int, List[CPMRelationshipInput]] = {tid: [] for tid in activities}
+    pred_rels: Dict[int, List[CPMRelationshipInput]] = {tid: [] for tid in activities}
+
+    for rel in relationships:
+        if rel.pred_task_id in activities and rel.succ_task_id in activities:
+            graph.add_edge(rel.pred_task_id, rel.succ_task_id, rel=rel)
+            succ_rels[rel.pred_task_id].append(rel)
+            pred_rels[rel.succ_task_id].append(rel)
+
+    # Topological sort
+    try:
+        topo_order = list(nx.topological_sort(graph))
+    except nx.NetworkXUnfeasible:
+        topo_order = list(activities.keys())
+
+    # -------------------------------------------------------------------------
+    # 1. FORWARD PASS (Early Start & Early Finish)
+    # -------------------------------------------------------------------------
+    early_starts: Dict[int, datetime] = {}
+    early_finishes: Dict[int, datetime] = {}
+    driving_pred_map: Dict[int, Set[int]] = {tid: set() for tid in activities}
+    rel_results: Dict[int, CPMRelationshipResult] = {}
+
+    for task_id in topo_order:
+        act = activities[task_id]
+        cal = cal_map.get(act.calendar_id, default_cal)
+        duration = max(0.0, act.remaining_duration_days)
+
+        # 1.1 Started / Completed Activity Handling
+        if act.status == "COMPLETED" and act.act_start_date and act.act_finish_date:
+            es = act.act_start_date
+            ef = act.act_finish_date
+            early_starts[task_id] = es
+            early_finishes[task_id] = ef
+            continue
+        elif act.status == "IN_PROGRESS" and act.act_start_date:
+            es = act.act_start_date
+            # Remaining duration scheduled from data_date (or act_start_date if data_date earlier)
+            base_date = max(act.act_start_date, options.data_date)
+            ef = cal.add_work_days(base_date, duration)
+            early_starts[task_id] = es
+            early_finishes[task_id] = ef
+            continue
+
+        # 1.2 Unstarted Activity: Calculate ES from Data Date & Predecessors
+        candidate_es_list: List[Tuple[datetime, Optional[CPMRelationshipInput]]] = [
+            (cal.align_to_work_day_start(options.data_date), None)
+        ]
+
+        for rel in pred_rels[task_id]:
+            pred_id = rel.pred_task_id
+            pred_act = activities[pred_id]
+            pred_es = early_starts.get(pred_id, options.data_date)
+            pred_ef = early_finishes.get(pred_id, options.data_date)
+            pred_cal = cal_map.get(pred_act.calendar_id, default_cal)
+
+            # Check Out-of-Sequence Mode
+            if options.oos_mode == OOSMode.PROGRESS_OVERRIDE and pred_act.status == "NOT_STARTED" and act.status == "IN_PROGRESS":
+                continue
+
+            lag_days = rel.lag_days
+            if rel.rel_type == "FS":
+                # Finish to Start: Succ ES >= Pred EF + Lag (aligned to next work morning if EF at evening)
+                if pred_ef.hour >= 17:
+                    next_morning = cal.align_to_work_day_start(pred_ef + timedelta(days=1))
+                else:
+                    next_morning = pred_ef
+                target_start = cal.advance_work_days(next_morning, lag_days) if lag_days != 0.0 else next_morning
+                candidate_es_list.append((target_start, rel))
+
+            elif rel.rel_type == "SS":
+                # Start to Start: Succ ES >= Pred ES + Lag
+                target_start = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
+                candidate_es_list.append((target_start, rel))
+
+            elif rel.rel_type == "FF":
+                # Finish to Finish: Succ EF >= Pred EF + Lag
+                target_finish = cal.advance_work_days(pred_ef, lag_days) if lag_days != 0.0 else pred_ef
+                implied_es = cal.subtract_work_days(target_finish, duration)
+                candidate_es_list.append((implied_es, rel))
+
+            elif rel.rel_type == "SF":
+                # Start to Finish: Succ EF >= Pred ES + Lag
+                target_finish = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
+                implied_es = cal.subtract_work_days(target_finish, duration)
+                candidate_es_list.append((implied_es, rel))
+
+        # Determine Maximum Early Start
+        max_es = max(item[0] for item in candidate_es_list)
+        es = cal.align_to_work_day_start(max_es)
+
+        # 1.3 Apply Early Constraints
+        if act.cstr_type == "CS_MANDSTART" and act.cstr_date:
+            es = act.cstr_date
+        elif act.cstr_type in ("CS_START", "CS_SSO") and act.cstr_date:
+            if act.cstr_date > es:
+                es = act.cstr_date
+
+        ef = cal.add_work_days(es, duration)
+
+        # 1.4 Apply Early Finish Constraints
+        if act.cstr_type == "CS_MANDEND" and act.cstr_date:
+            ef = act.cstr_date
+            es = cal.subtract_work_days(ef, duration)
+        elif act.cstr_type in ("CS_FINISH", "CS_FSO") and act.cstr_date:
+            if act.cstr_date > ef:
+                ef = act.cstr_date
+                es = cal.subtract_work_days(ef, duration)
+
+        early_starts[task_id] = es
+        early_finishes[task_id] = ef
+
+        # 1.5 Evaluate Driving Predecessors (Handling Ties & Overrides)
+        for cand_date, rel in candidate_es_list:
+            if rel is not None:
+                if act.status in ("IN_PROGRESS", "COMPLETED") and act.act_start_date:
+                    rel_results[rel.rel_id] = CPMRelationshipResult(
+                        rel_id=rel.rel_id,
+                        pred_task_id=rel.pred_task_id,
+                        succ_task_id=rel.succ_task_id,
+                        rel_type=rel.rel_type,
+                        lag_days=rel.lag_days,
+                        is_driving=False,
+                        driving_status=DrivingStatus.OVERRIDDEN_BY_ACTUAL_DATE,
+                    )
+                else:
+                    is_driving_edge = cand_date.date() == max_es.date()
+                    status = DrivingStatus.DRIVING if is_driving_edge else DrivingStatus.NON_DRIVING
+                    rel_results[rel.rel_id] = CPMRelationshipResult(
+                        rel_id=rel.rel_id,
+                        pred_task_id=rel.pred_task_id,
+                        succ_task_id=rel.succ_task_id,
+                        rel_type=rel.rel_type,
+                        lag_days=rel.lag_days,
+                        is_driving=is_driving_edge,
+                        driving_status=status,
+                    )
+                    if is_driving_edge:
+                        driving_pred_map[task_id].add(rel.pred_task_id)
+
+    # -------------------------------------------------------------------------
+    # 2. BACKWARD PASS (Late Finish & Late Start)
+    # -------------------------------------------------------------------------
+    late_starts: Dict[int, datetime] = {}
+    late_finishes: Dict[int, datetime] = {}
+
+    project_early_finish = max(early_finishes.values()) if early_finishes else options.data_date
+    project_late_anchor = options.must_finish_by_date or project_early_finish
+
+    reverse_topo_order = list(reversed(topo_order))
+
+    for task_id in reverse_topo_order:
+        act = activities[task_id]
+        cal = cal_map.get(act.calendar_id, default_cal)
+        duration = max(0.0, act.remaining_duration_days)
+
+        # If completed with actuals, late dates equal actual dates
+        if act.status == "COMPLETED" and act.act_start_date and act.act_finish_date:
+            late_starts[task_id] = act.act_start_date
+            late_finishes[task_id] = act.act_finish_date
+            continue
+
+        candidate_lf_list: List[datetime] = []
+
+        outgoing = succ_rels[task_id]
+        if not outgoing:
+            candidate_lf_list.append(project_late_anchor)
+        else:
+            for rel in outgoing:
+                succ_id = rel.succ_task_id
+                succ_ls = late_starts.get(succ_id, project_late_anchor)
+                succ_lf = late_finishes.get(succ_id, project_late_anchor)
+                lag_days = rel.lag_days
+
+                if rel.rel_type == "FS":
+                    # Pred LF <= Succ LS - Lag (aligned to work evening of previous work day)
+                    target_start = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
+                    prev_evening = cal.align_to_work_day_end(target_start - timedelta(days=1))
+                    candidate_lf_list.append(prev_evening)
+
+                elif rel.rel_type == "SS":
+                    # Pred LS <= Succ LS - Lag -> Implied LF = LS + duration
+                    target_ls = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
+                    implied_lf = cal.add_work_days(target_ls, duration)
+                    candidate_lf_list.append(implied_lf)
+
+                elif rel.rel_type == "FF":
+                    # Pred LF <= Succ LF - Lag
+                    target_lf = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
+                    candidate_lf_list.append(target_lf)
+
+                elif rel.rel_type == "SF":
+                    # Pred LS <= Succ LF - Lag -> Implied LF = LS + duration
+                    target_ls = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
+                    implied_lf = cal.add_work_days(target_ls, duration)
+                    candidate_lf_list.append(implied_lf)
+
+        min_lf = min(candidate_lf_list) if candidate_lf_list else project_late_anchor
+        lf = cal.align_to_work_day_end(min_lf)
+
+        # 2.1 Apply Late Finish Constraints
+        if act.cstr_type == "CS_MANDEND" and act.cstr_date:
+            lf = act.cstr_date
+        elif act.cstr_type in ("CS_FINISH", "CS_FSB") and act.cstr_date:
+            if act.cstr_date < lf:
+                lf = act.cstr_date
+
+        ls = cal.subtract_work_days(lf, duration)
+
+        # 2.2 Apply Late Start Constraints
+        if act.cstr_type == "CS_MANDSTART" and act.cstr_date:
+            ls = act.cstr_date
+            lf = cal.add_work_days(ls, duration)
+        elif act.cstr_type in ("CS_START", "CS_SSB") and act.cstr_date:
+            if act.cstr_date < ls:
+                ls = act.cstr_date
+                lf = cal.add_work_days(ls, duration)
+
+        late_starts[task_id] = ls
+        late_finishes[task_id] = lf
+
+    project_late_finish = max(late_finishes.values()) if late_finishes else project_late_anchor
+
+    # -------------------------------------------------------------------------
+    # 3. FLOAT CALCULATIONS & LONGEST PATH
+    # -------------------------------------------------------------------------
+    activity_results: Dict[int, CPMActivityResult] = {}
+
+    terminal_anchors = [
+        tid for tid, ef in early_finishes.items()
+        if ef.date() == project_early_finish.date() and not succ_rels[tid]
+    ]
+    if not terminal_anchors:
+        terminal_anchors = [
+            tid for tid, ef in early_finishes.items()
+            if ef.date() == project_early_finish.date()
+        ]
+
+    longest_path_set: Set[int] = set()
+    queue = list(terminal_anchors)
+    visited_trace: Set[int] = set()
+
+    while queue:
+        curr = queue.pop(0)
+        if curr in visited_trace:
+            continue
+        visited_trace.add(curr)
+        longest_path_set.add(curr)
+
+        for pred_id in driving_pred_map.get(curr, []):
+            if pred_id not in visited_trace:
+                queue.append(pred_id)
+
+    for task_id, act in activities.items():
+        cal = cal_map.get(act.calendar_id, default_cal)
+        es = early_starts[task_id]
+        ef = early_finishes[task_id]
+        ls = late_starts[task_id]
+        lf = late_finishes[task_id]
+
+        if act.status == "COMPLETED":
+            tf = 0.0
+            ff = 0.0
+        else:
+            start_float = cal.work_days_between(es, ls)
+            finish_float = cal.work_days_between(ef, lf)
+
+            if options.f_calc_mode == FloatCalcMode.FINISH_DATES:
+                tf = finish_float
+            elif options.f_calc_mode == FloatCalcMode.MIN_START_FINISH:
+                tf = min(start_float, finish_float)
+            else:
+                tf = start_float
+
+            ff_candidates: List[float] = []
+            for rel in succ_rels[task_id]:
+                succ_id = rel.succ_task_id
+                succ_es = early_starts.get(succ_id, ef)
+                succ_cal = cal_map.get(activities[succ_id].calendar_id, default_cal)
+                gap = succ_cal.work_days_between(ef, succ_es) - rel.lag_days
+                ff_candidates.append(max(0.0, gap))
+
+            ff = min(ff_candidates) if ff_candidates else max(0.0, tf)
+
+        is_on_longest_path = task_id in longest_path_set
+        if options.critical_path_type == CriticalPathType.LONGEST_PATH:
+            is_critical = is_on_longest_path
+        else:
+            is_critical = tf <= options.critical_float_threshold_days
+
+        activity_results[task_id] = CPMActivityResult(
+            task_id=task_id,
+            task_code=act.task_code,
+            early_start=es,
+            early_finish=ef,
+            late_start=ls,
+            late_finish=lf,
+            total_float_days=tf,
+            free_float_days=ff,
+            is_critical=is_critical,
+            driving_path_flag=is_on_longest_path,
+        )
+
+    return CPMResult(
+        activities=activity_results,
+        relationships=rel_results,
+        project_early_finish=project_early_finish,
+        project_late_finish=project_late_finish,
+        longest_path_task_ids=list(longest_path_set),
+    )
