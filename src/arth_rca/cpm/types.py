@@ -49,6 +49,7 @@ class CPMActivityInput:
     cstr_type2: Optional[str] = None
     cstr_date2: Optional[datetime] = None
     is_milestone: bool = False
+    task_type: str = "TT_Task"
 
 
 @dataclass(frozen=True)

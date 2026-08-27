@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from arth_rca.api.routes.analytics import router as analytics_router
 from arth_rca.api.routes.classification import router as classification_router
+from arth_rca.api.routes.scenarios import router as scenarios_router
 from arth_rca.db.database import init_db
 
 app = FastAPI(
@@ -32,6 +33,7 @@ def on_startup():
 
 app.include_router(analytics_router)
 app.include_router(classification_router)
+app.include_router(scenarios_router)
 
 @app.get("/health")
 def health_check():
