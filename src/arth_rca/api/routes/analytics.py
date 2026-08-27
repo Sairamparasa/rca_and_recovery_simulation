@@ -24,6 +24,8 @@ from arth_rca.cpm.types import (
     CPMOptions,
 )
 from arth_rca.cpm.calendar import parse_p6_clndr_data
+from arth_rca.analytics.snapshot_diff import SnapshotDiffResult, compute_snapshot_diff
+from arth_rca.analytics.trend import HistoricalTrendPayload, SnapshotDataPackage, aggregate_historical_trends
 from arth_rca.db.models import (
     Project,
     Snapshot,
@@ -246,3 +248,186 @@ def get_snapshot_dcma_assessment(snapshot_id: int, db: Session = Depends(get_db)
         snapshot_id=snapshot_id,
     )
     return report
+
+
+@router.get("/snapshots/{snapshot_id}/diff", response_model=SnapshotDiffResult)
+def get_snapshot_diff(
+    snapshot_id: int,
+    compare_to_snapshot_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Compare snapshot_id against a baseline or previous snapshot.
+    If compare_to_snapshot_id is omitted, compares against the project baseline or prior chronological snapshot.
+    """
+    snap_b = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
+    if not snap_b:
+        raise HTTPException(status_code=404, detail="Target snapshot not found")
+
+    if compare_to_snapshot_id:
+        snap_a = db.query(Snapshot).filter(Snapshot.id == compare_to_snapshot_id).first()
+    else:
+        # Default to baseline of same project, or previous chronological snapshot
+        snap_a = db.query(Snapshot).filter(Snapshot.project_id == snap_b.project_id, Snapshot.is_baseline == True).first()
+        if not snap_a or snap_a.id == snap_b.id:
+            snap_a = (
+                db.query(Snapshot)
+                .filter(Snapshot.project_id == snap_b.project_id, Snapshot.data_date < snap_b.data_date)
+                .order_by(Snapshot.data_date.desc())
+                .first()
+            )
+
+    if not snap_a:
+        raise HTTPException(status_code=400, detail="No comparison baseline or prior snapshot found for project")
+
+    def build_inputs(snap: Snapshot):
+        cals = db.query(CalendarModel).filter(CalendarModel.project_id == snap.project_id).all()
+        cals_map = {}
+        for c in cals:
+            clndr_raw = getattr(c, "clndr_data", "")
+            if clndr_raw:
+                wd, hol, wex = parse_p6_clndr_data(clndr_raw)
+            else:
+                wd = [True, True, True, True, True, False, False]
+                hol, wex = [], {}
+            cals_map[c.id] = CPMCalendarInput(
+                clndr_id=c.id,
+                name=c.name,
+                working_days=wd,
+                work_hours_per_day=getattr(c, "day_hr_cnt", 8.0) or 8.0,
+                holidays=hol,
+                work_exceptions=wex,
+            )
+
+        tasks = db.query(Activity).filter(Activity.snapshot_id == snap.id).all()
+        acts_map = {
+            t.id: CPMActivityInput(
+                task_id=t.id,
+                task_code=t.task_code,
+                calendar_id=t.calendar_id or 1,
+                original_duration_days=t.original_duration,
+                remaining_duration_days=t.remaining_duration,
+                status=t.status,
+                act_start_date=t.actual_start,
+                act_finish_date=t.actual_finish,
+                cstr_type=t.constraint_type,
+                cstr_date=t.constraint_date,
+                is_milestone=t.is_milestone,
+            )
+            for t in tasks
+        }
+
+        rels = db.query(Relationship).filter(Relationship.snapshot_id == snap.id).all()
+        rels_input = [
+            CPMRelationshipInput(
+                rel_id=r.id or idx,
+                pred_task_id=r.predecessor_activity_id,
+                succ_task_id=r.successor_activity_id,
+                rel_type=r.relationship_type or "FS",
+                lag_days=r.lag,
+            )
+            for idx, r in enumerate(rels, start=1)
+        ]
+        options = CPMOptions(data_date=snap.data_date)
+        return acts_map, rels_input, cals_map, options
+
+    acts_a, rels_a, cals_a, opts_a = build_inputs(snap_a)
+    acts_b, rels_b, cals_b, opts_b = build_inputs(snap_b)
+
+    return compute_snapshot_diff(
+        acts_a=acts_a,
+        rels_a=rels_a,
+        cals_a=cals_a,
+        options_a=opts_a,
+        acts_b=acts_b,
+        rels_b=rels_b,
+        cals_b=cals_b,
+        options_b=opts_b,
+        snapshot_a_id=snap_a.id,
+        snapshot_b_id=snap_b.id,
+    )
+
+
+@router.get("/projects/{project_id}/trend", response_model=HistoricalTrendPayload)
+def get_project_historical_trend(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve historical trend data across all ingested snapshots for a project.
+    Strictly historical facts and point-to-point calculations (zero extrapolation).
+    """
+    proj = db.query(Project).filter(Project.id == project_id).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    snapshots = db.query(Snapshot).filter(Snapshot.project_id == project_id).order_by(Snapshot.data_date.asc()).all()
+    if not snapshots:
+        return HistoricalTrendPayload(project_id=project_id, total_snapshots=0)
+
+    packages: List[SnapshotDataPackage] = []
+    cals = db.query(CalendarModel).filter(CalendarModel.project_id == project_id).all()
+    cals_map = {}
+    for c in cals:
+        clndr_raw = getattr(c, "clndr_data", "")
+        if clndr_raw:
+            wd, hol, wex = parse_p6_clndr_data(clndr_raw)
+        else:
+            wd = [True, True, True, True, True, False, False]
+            hol, wex = [], {}
+        cals_map[c.id] = CPMCalendarInput(
+            clndr_id=c.id,
+            name=c.name,
+            working_days=wd,
+            work_hours_per_day=getattr(c, "day_hr_cnt", 8.0) or 8.0,
+            holidays=hol,
+            work_exceptions=wex,
+        )
+
+    for snap in snapshots:
+        tasks = db.query(Activity).filter(Activity.snapshot_id == snap.id).all()
+        acts_map = {
+            t.id: CPMActivityInput(
+                task_id=t.id,
+                task_code=t.task_code,
+                calendar_id=t.calendar_id or 1,
+                original_duration_days=t.original_duration,
+                remaining_duration_days=t.remaining_duration,
+                status=t.status,
+                act_start_date=t.actual_start,
+                act_finish_date=t.actual_finish,
+                cstr_type=t.constraint_type,
+                cstr_date=t.constraint_date,
+                is_milestone=t.is_milestone,
+            )
+            for t in tasks
+        }
+
+        rels = db.query(Relationship).filter(Relationship.snapshot_id == snap.id).all()
+        rels_input = [
+            CPMRelationshipInput(
+                rel_id=r.id or idx,
+                pred_task_id=r.predecessor_activity_id,
+                succ_task_id=r.successor_activity_id,
+                rel_type=r.relationship_type or "FS",
+                lag_days=r.lag,
+            )
+            for idx, r in enumerate(rels, start=1)
+        ]
+        options = CPMOptions(data_date=snap.data_date)
+
+        packages.append(
+            SnapshotDataPackage(
+                snapshot_id=snap.id,
+                data_date=snap.data_date,
+                is_baseline=snap.is_baseline,
+                source_filename=snap.source_filename,
+                activities=acts_map,
+                relationships=rels_input,
+                calendars=cals_map,
+                options=options,
+            )
+        )
+
+    return aggregate_historical_trends(project_id=project_id, snapshots=packages)
+
