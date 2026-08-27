@@ -281,7 +281,7 @@ def run_cpm(
                     candidate_lf_list.append(succ_ls)
                 elif rel.rel_type == "FS":
                     target_start = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
-                    if succ_act.is_milestone or succ_ls.hour >= 17:
+                    if is_completed or succ_act.is_milestone or succ_ls.hour >= 17:
                         candidate_lf_list.append(target_start)
                     else:
                         prev_evening = pred_cal.align_to_work_day_end(target_start - timedelta(days=1))
