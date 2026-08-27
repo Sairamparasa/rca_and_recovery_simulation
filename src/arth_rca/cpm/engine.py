@@ -2,7 +2,7 @@
 Deterministic, calendar-aware CPM engine implemented as a pure function.
 Signature: run_cpm(activities, relationships, calendars, options) -> CPMResult
 Zero database access, zero side-effects.
-Implements exact Primavera P6 F9 scheduling mechanics including milestone handling.
+Implements exact Primavera P6 F9 multi-calendar scheduling mechanics.
 """
 
 from datetime import datetime, date, timedelta, time
@@ -120,30 +120,31 @@ def run_cpm(
 
             # P6 Actual Dates Resolution on Completed Predecessors
             if pred_act.status == "COMPLETED":
+                hist_finish = min(pred_act.act_finish_date or task_data_date, task_data_date)
+                hist_start = min(pred_act.act_start_date or task_data_date, task_data_date)
+
                 if rel.rel_type == "FS":
-                    hist_finish = pred_act.act_finish_date or task_data_date
                     if act.is_milestone or duration == 0.0:
                         nxt = hist_finish
                     elif hist_finish.hour >= 17:
-                        nxt = pred_cal.align_to_work_day_start(hist_finish + timedelta(days=1))
+                        nxt = cal.align_to_work_day_start(hist_finish + timedelta(days=1))
                     else:
                         nxt = hist_finish
                     target_start = pred_cal.advance_work_days(nxt, lag_days) if lag_days != 0.0 else nxt
-                    candidate_es_list.append((max(target_start, task_data_date), rel))
+                    aligned_start = cal.align_to_work_day_start(target_start) if not (act.is_milestone and target_start.hour >= 17) else target_start
+                    candidate_es_list.append((max(aligned_start, task_data_date), rel))
 
                 elif rel.rel_type == "SS":
-                    hist_start = pred_act.act_start_date or task_data_date
                     target_start = pred_cal.advance_work_days(hist_start, lag_days) if lag_days != 0.0 else hist_start
-                    candidate_es_list.append((max(target_start, task_data_date), rel))
+                    aligned_start = cal.align_to_work_day_start(target_start)
+                    candidate_es_list.append((max(aligned_start, task_data_date), rel))
 
                 elif rel.rel_type == "FF":
-                    hist_finish = pred_act.act_finish_date or task_data_date
                     target_finish = pred_cal.advance_work_days(hist_finish, lag_days) if lag_days != 0.0 else hist_finish
                     implied_es = cal.subtract_work_days(max(target_finish, task_data_date), duration)
                     candidate_es_list.append((max(implied_es, task_data_date), rel))
 
                 elif rel.rel_type == "SF":
-                    hist_start = pred_act.act_start_date or task_data_date
                     target_finish = pred_cal.advance_work_days(hist_start, lag_days) if lag_days != 0.0 else hist_start
                     implied_es = cal.subtract_work_days(max(target_finish, task_data_date), duration)
                     candidate_es_list.append((max(implied_es, task_data_date), rel))
@@ -157,15 +158,17 @@ def run_cpm(
                     if act.is_milestone or duration == 0.0:
                         next_morning = pred_ef
                     elif pred_ef.hour >= 17:
-                        next_morning = pred_cal.align_to_work_day_start(pred_ef + timedelta(days=1))
+                        next_morning = cal.align_to_work_day_start(pred_ef + timedelta(days=1))
                     else:
                         next_morning = pred_ef
                     target_start = pred_cal.advance_work_days(next_morning, lag_days) if lag_days != 0.0 else next_morning
-                    candidate_es_list.append((target_start, rel))
+                    aligned_start = cal.align_to_work_day_start(target_start) if not (act.is_milestone and target_start.hour >= 17) else target_start
+                    candidate_es_list.append((aligned_start, rel))
 
                 elif rel.rel_type == "SS":
                     target_start = pred_cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
-                    candidate_es_list.append((target_start, rel))
+                    aligned_start = cal.align_to_work_day_start(target_start)
+                    candidate_es_list.append((aligned_start, rel))
 
                 elif rel.rel_type == "FF":
                     target_finish = pred_cal.advance_work_days(pred_ef, lag_days) if lag_days != 0.0 else pred_ef
@@ -243,17 +246,12 @@ def run_cpm(
     for task_id in reverse_topo_order:
         act = activities[task_id]
         cal = cal_map.get(act.calendar_id, default_cal)
-        duration = max(0.0, act.remaining_duration_days)
+        duration = 0.0 if act.status == "COMPLETED" else max(0.0, act.remaining_duration_days)
         task_data_date = (
             project_data_dates.get(getattr(act, "proj_id", 0), options.data_date)
             if project_data_dates
             else options.data_date
         )
-
-        if act.status == "COMPLETED":
-            late_starts[task_id] = early_starts[task_id]
-            late_finishes[task_id] = early_finishes[task_id]
-            continue
 
         candidate_lf_list: List[datetime] = []
 
@@ -264,6 +262,7 @@ def run_cpm(
             for rel in outgoing:
                 succ_id = rel.succ_task_id
                 succ_act = activities[succ_id]
+                succ_cal = cal_map.get(succ_act.calendar_id, default_cal)
                 succ_ls = late_starts.get(succ_id, project_late_anchor)
                 succ_lf = late_finishes.get(succ_id, project_late_anchor)
                 pred_cal = cal
