@@ -186,7 +186,7 @@ def run_cpm(
 
         # 1.3 Apply Early Constraints
         if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
-            es = act.cstr_date
+            es = max(act.cstr_date, task_data_date) if act.status != "COMPLETED" else act.cstr_date
         elif act.cstr_type in EARLY_START_CONSTRAINTS and act.cstr_date:
             if act.cstr_date > es:
                 es = act.cstr_date
@@ -195,7 +195,7 @@ def run_cpm(
 
         # 1.4 Apply Early Finish Constraints
         if act.cstr_type in MANDATORY_FINISH_CONSTRAINTS and act.cstr_date:
-            ef = act.cstr_date
+            ef = max(act.cstr_date, task_data_date) if act.status != "COMPLETED" else act.cstr_date
             es = cal.subtract_work_days(ef, duration)
         elif act.cstr_type in EARLY_FINISH_CONSTRAINTS and act.cstr_date:
             if act.cstr_date > ef:
