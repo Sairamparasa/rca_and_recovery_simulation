@@ -157,6 +157,30 @@ def validate_lever_set(
                 raise CombinatorialConflictError(f"Multiple conflicting logic levers applied to '{rel_key}'.")
             touched_rel_keys.add(rel_key)
 
+    # Combinatorial graph cycle validation on mutated DAG
+    test_graph = graph.copy()
+    for lever in levers:
+        if isinstance(lever, LogicChangeLever):
+            pid = task_code_to_id.get(lever.pred_task_code)
+            sid = task_code_to_id.get(lever.succ_task_code)
+            if pid and sid:
+                if lever.action == "ADD":
+                    test_graph.add_edge(pid, sid)
+                elif lever.action == "REMOVE" and test_graph.has_edge(pid, sid):
+                    test_graph.remove_edge(pid, sid)
+        elif isinstance(lever, ResequencingLever):
+            pid = task_code_to_id.get(lever.task_a_code)
+            sid = task_code_to_id.get(lever.task_b_code)
+            if pid and sid:
+                if lever.new_order == "A_THEN_B":
+                    test_graph.add_edge(pid, sid)
+                elif lever.new_order == "B_THEN_A":
+                    test_graph.add_edge(sid, pid)
+
+    if not nx.is_directed_acyclic_graph(test_graph):
+        cycles = list(nx.simple_cycles(test_graph))
+        raise CombinatorialConflictError(f"Lever set created a circular logic loop in schedule network: {cycles[:3]}")
+
     return graph
 
 
