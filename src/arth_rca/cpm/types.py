@@ -38,6 +38,7 @@ class CPMActivityInput:
     calendar_id: int
     original_duration_days: float
     remaining_duration_days: float
+    proj_id: Optional[int] = None
     status: str = "NOT_STARTED"  # NOT_STARTED, IN_PROGRESS, COMPLETED
     act_start_date: Optional[datetime] = None
     act_finish_date: Optional[datetime] = None
@@ -63,7 +64,7 @@ class CPMRelationshipInput:
 class CPMCalendarInput:
     clndr_id: int
     name: str = "Standard 5-Day"
-    working_days: Set[int] = field(default_factory=lambda: {0, 1, 2, 3, 4})  # Monday=0 .. Friday=4
+    working_days: Set[int] = field(default_factory=lambda: {0, 1, 2, 3, 4})  # 0=Mon..6=Sun
     work_hours_per_day: float = 8.0
     holidays: Set[date] = field(default_factory=set)
 

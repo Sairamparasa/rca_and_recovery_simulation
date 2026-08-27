@@ -2,6 +2,7 @@
 Deterministic, calendar-aware CPM engine implemented as a pure function.
 Signature: run_cpm(activities, relationships, calendars, options) -> CPMResult
 Zero database access, zero side-effects.
+Implements exact Primavera P6 F9 scheduling mechanics.
 """
 
 from datetime import datetime, date, timedelta, time
@@ -40,6 +41,7 @@ def run_cpm(
     relationships: List[CPMRelationshipInput],
     calendars: Dict[int, CPMCalendarInput],
     options: CPMOptions,
+    project_data_dates: Optional[Dict[int, datetime]] = None,
 ) -> CPMResult:
     """
     Execute deterministic calendar-aware Critical Path Method calculations.
@@ -63,7 +65,6 @@ def run_cpm(
     for task_id in activities.keys():
         graph.add_node(task_id)
 
-    # Group relationships by predecessor and successor
     succ_rels: Dict[int, List[CPMRelationshipInput]] = {tid: [] for tid in activities}
     pred_rels: Dict[int, List[CPMRelationshipInput]] = {tid: [] for tid in activities}
 
@@ -91,62 +92,91 @@ def run_cpm(
         act = activities[task_id]
         cal = cal_map.get(act.calendar_id, default_cal)
         duration = max(0.0, act.remaining_duration_days)
+        task_data_date = (
+            project_data_dates.get(getattr(act, "proj_id", 0), options.data_date)
+            if project_data_dates
+            else options.data_date
+        )
 
-        # 1.1 Started / Completed Activity Handling
-        if act.status == "COMPLETED" and act.act_start_date and act.act_finish_date:
-            es = act.act_start_date
-            ef = act.act_finish_date
-            early_starts[task_id] = es
-            early_finishes[task_id] = ef
-            continue
-        elif act.status == "IN_PROGRESS" and act.act_start_date:
-            es = act.act_start_date
-            base_date = max(act.act_start_date, options.data_date)
-            ef = cal.add_work_days(base_date, duration)
+        # 1.1 Completed Activities
+        if act.status == "COMPLETED":
+            es = act.act_start_date or task_data_date
+            ef = act.act_finish_date or task_data_date
             early_starts[task_id] = es
             early_finishes[task_id] = ef
             continue
 
-        # 1.2 Unstarted Activity: Calculate ES from Data Date & Predecessors
+        # 1.2 In-Progress or Unstarted Activities
         candidate_es_list: List[Tuple[datetime, Optional[CPMRelationshipInput]]] = [
-            (cal.align_to_work_day_start(options.data_date), None)
+            (cal.align_to_work_day_start(task_data_date), None)
         ]
 
         for rel in pred_rels[task_id]:
             pred_id = rel.pred_task_id
             pred_act = activities[pred_id]
-            pred_es = early_starts.get(pred_id, options.data_date)
-            pred_ef = early_finishes.get(pred_id, options.data_date)
             pred_cal = cal_map.get(pred_act.calendar_id, default_cal)
+            lag_days = rel.lag_days
 
             if options.oos_mode == OOSMode.PROGRESS_OVERRIDE and pred_act.status == "NOT_STARTED" and act.status == "IN_PROGRESS":
                 continue
 
-            lag_days = rel.lag_days
-            if rel.rel_type == "FS":
-                if pred_ef.hour >= 17:
-                    next_morning = cal.align_to_work_day_start(pred_ef + timedelta(days=1))
-                else:
-                    next_morning = pred_ef
-                target_start = cal.advance_work_days(next_morning, lag_days) if lag_days != 0.0 else next_morning
-                candidate_es_list.append((target_start, rel))
+            # P6 Actual Dates Resolution on Completed Predecessors
+            if pred_act.status == "COMPLETED":
+                if rel.rel_type == "FS":
+                    hist_finish = pred_act.act_finish_date or task_data_date
+                    if hist_finish.hour >= 17:
+                        nxt = pred_cal.align_to_work_day_start(hist_finish + timedelta(days=1))
+                    else:
+                        nxt = hist_finish
+                    target_start = pred_cal.advance_work_days(nxt, lag_days) if lag_days != 0.0 else nxt
+                    candidate_es_list.append((max(target_start, task_data_date), rel))
 
-            elif rel.rel_type == "SS":
-                target_start = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
-                candidate_es_list.append((target_start, rel))
+                elif rel.rel_type == "SS":
+                    hist_start = pred_act.act_start_date or task_data_date
+                    target_start = pred_cal.advance_work_days(hist_start, lag_days) if lag_days != 0.0 else hist_start
+                    candidate_es_list.append((max(target_start, task_data_date), rel))
 
-            elif rel.rel_type == "FF":
-                target_finish = cal.advance_work_days(pred_ef, lag_days) if lag_days != 0.0 else pred_ef
-                implied_es = cal.subtract_work_days(target_finish, duration)
-                candidate_es_list.append((implied_es, rel))
+                elif rel.rel_type == "FF":
+                    hist_finish = pred_act.act_finish_date or task_data_date
+                    target_finish = pred_cal.advance_work_days(hist_finish, lag_days) if lag_days != 0.0 else hist_finish
+                    implied_es = cal.subtract_work_days(max(target_finish, task_data_date), duration)
+                    candidate_es_list.append((max(implied_es, task_data_date), rel))
 
-            elif rel.rel_type == "SF":
-                target_finish = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
-                implied_es = cal.subtract_work_days(target_finish, duration)
-                candidate_es_list.append((implied_es, rel))
+                elif rel.rel_type == "SF":
+                    hist_start = pred_act.act_start_date or task_data_date
+                    target_finish = pred_cal.advance_work_days(hist_start, lag_days) if lag_days != 0.0 else hist_start
+                    implied_es = cal.subtract_work_days(max(target_finish, task_data_date), duration)
+                    candidate_es_list.append((max(implied_es, task_data_date), rel))
+
+            else:
+                # Active or Unstarted Predecessor
+                pred_es = early_starts.get(pred_id, task_data_date)
+                pred_ef = early_finishes.get(pred_id, task_data_date)
+
+                if rel.rel_type == "FS":
+                    if pred_ef.hour >= 17:
+                        next_morning = pred_cal.align_to_work_day_start(pred_ef + timedelta(days=1))
+                    else:
+                        next_morning = pred_ef
+                    target_start = pred_cal.advance_work_days(next_morning, lag_days) if lag_days != 0.0 else next_morning
+                    candidate_es_list.append((target_start, rel))
+
+                elif rel.rel_type == "SS":
+                    target_start = pred_cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
+                    candidate_es_list.append((target_start, rel))
+
+                elif rel.rel_type == "FF":
+                    target_finish = pred_cal.advance_work_days(pred_ef, lag_days) if lag_days != 0.0 else pred_ef
+                    implied_es = cal.subtract_work_days(target_finish, duration)
+                    candidate_es_list.append((implied_es, rel))
+
+                elif rel.rel_type == "SF":
+                    target_finish = pred_cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
+                    implied_es = cal.subtract_work_days(target_finish, duration)
+                    candidate_es_list.append((implied_es, rel))
 
         max_es = max(item[0] for item in candidate_es_list)
-        es = cal.align_to_work_day_start(max_es)
+        es = cal.align_to_work_day_start(max(max_es, task_data_date))
 
         # 1.3 Apply Early Constraints
         if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
@@ -212,10 +242,15 @@ def run_cpm(
         act = activities[task_id]
         cal = cal_map.get(act.calendar_id, default_cal)
         duration = max(0.0, act.remaining_duration_days)
+        task_data_date = (
+            project_data_dates.get(getattr(act, "proj_id", 0), options.data_date)
+            if project_data_dates
+            else options.data_date
+        )
 
-        if act.status == "COMPLETED" and act.act_start_date and act.act_finish_date:
-            late_starts[task_id] = act.act_start_date
-            late_finishes[task_id] = act.act_finish_date
+        if act.status == "COMPLETED":
+            late_starts[task_id] = early_starts[task_id]
+            late_finishes[task_id] = early_finishes[task_id]
             continue
 
         candidate_lf_list: List[datetime] = []
@@ -228,25 +263,26 @@ def run_cpm(
                 succ_id = rel.succ_task_id
                 succ_ls = late_starts.get(succ_id, project_late_anchor)
                 succ_lf = late_finishes.get(succ_id, project_late_anchor)
+                pred_cal = cal
                 lag_days = rel.lag_days
 
                 if rel.rel_type == "FS":
-                    target_start = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
-                    prev_evening = cal.align_to_work_day_end(target_start - timedelta(days=1))
+                    target_start = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
+                    prev_evening = pred_cal.align_to_work_day_end(target_start - timedelta(days=1))
                     candidate_lf_list.append(prev_evening)
 
                 elif rel.rel_type == "SS":
-                    target_ls = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
-                    implied_lf = cal.add_work_days(target_ls, duration)
+                    target_ls = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
+                    implied_lf = pred_cal.add_work_days(target_ls, duration)
                     candidate_lf_list.append(implied_lf)
 
                 elif rel.rel_type == "FF":
-                    target_lf = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
+                    target_lf = pred_cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
                     candidate_lf_list.append(target_lf)
 
                 elif rel.rel_type == "SF":
-                    target_ls = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
-                    implied_lf = cal.add_work_days(target_ls, duration)
+                    target_ls = pred_cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
+                    implied_lf = pred_cal.add_work_days(target_ls, duration)
                     candidate_lf_list.append(implied_lf)
 
         min_lf = min(candidate_lf_list) if candidate_lf_list else project_late_anchor
