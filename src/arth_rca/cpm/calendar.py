@@ -147,29 +147,32 @@ class CalendarEngine:
         return self.advance_work_days(dt, -offset_days)
 
     def work_days_between(self, start_dt: datetime, end_dt: datetime) -> float:
-        """Count the number of working days difference between start_dt and end_dt."""
-        d1 = start_dt.date()
-        d2 = end_dt.date()
-
-        if d1 == d2:
+        """Count the number of working days difference between start_dt and end_dt with exact hour boundary precision."""
+        if start_dt == end_dt:
             return 0.0
 
-        if d1 > d2:
-            curr = d2
-            count = 0
-            while curr < d1:
-                if self.is_work_day(curr):
-                    count += 1
-                curr += timedelta(days=1)
-            return -float(count)
+        is_neg = False
+        if start_dt > end_dt:
+            is_neg = True
+            t_start, t_end = end_dt, start_dt
+        else:
+            t_start, t_end = start_dt, end_dt
 
-        curr = d1
+        curr = t_start.date()
+        if t_start.hour >= 17:
+            curr += timedelta(days=1)
+
+        stop_date = t_end.date()
+        if t_end.hour >= 17:
+            stop_date += timedelta(days=1)
+
         count = 0
-        while curr < d2:
+        while curr < stop_date:
             if self.is_work_day(curr):
                 count += 1
             curr += timedelta(days=1)
-        return float(count)
+
+        return -float(count) if is_neg else float(count)
 
 
 def build_calendar_engine_map(calendars: Dict[int, CPMCalendarInput]) -> Dict[int, CalendarEngine]:

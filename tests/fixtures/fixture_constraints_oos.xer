@@ -10,7 +10,7 @@ ERMHDR	8.0	2026-08-27	PROJECT	ADMIN	Constraints and OOS Fixture
 %R	1003	103	WBS3	Industrial Area
 %T	TASK
 %F	task_id	proj_id	wbs_id	clndr_id	task_code	task_name	status_code	target_durn_hr_cnt	remain_durn_hr_cnt	early_start_date	early_end_date	late_start_date	late_end_date	total_float_hr_cnt	free_float_hr_cnt	driving_path_flag	cstr_type	cstr_date	act_start_date	act_end_date
-%R	20	103	1003	1	C200	Permit Approval	TK_Complete	16.0	0.0	2026-11-04 08:00	2026-11-04 08:00	2026-11-02 08:00	2026-11-02 08:00	0.0	0.0	Y	CS_START	2026-11-02 08:00	2026-11-02 08:00	2026-11-03 17:00
+%R	20	103	1003	1	C200	Permit Approval	TK_Complete	16.0	0.0	2026-11-04 08:00	2026-11-04 08:00	2026-11-03 17:00	2026-11-03 17:00	0.0	0.0	Y	CS_START	2026-11-02 08:00	2026-11-02 08:00	2026-11-03 17:00
 %R	21	103	1003	1	C210	Piling Work	TK_Active	32.0	32.0	2026-11-04 08:00	2026-11-09 17:00	2026-11-04 08:00	2026-11-09 17:00	0.0	0.0	Y			2026-11-04 08:00	
 %R	22	103	1003	1	C220	Cap Pouring	TK_NotStart	24.0	24.0	2026-11-10 08:00	2026-11-12 17:00	2026-11-10 08:00	2026-11-12 17:00	0.0	0.0	Y				
 %R	23	103	1003	1	C230	Superstructure	TK_NotStart	32.0	32.0	2026-11-13 08:00	2026-11-18 17:00	2026-11-13 08:00	2026-11-18 17:00	0.0	0.0	Y				
