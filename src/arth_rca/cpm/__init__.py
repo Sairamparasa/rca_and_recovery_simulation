@@ -15,7 +15,11 @@ from arth_rca.cpm.types import (
     CriticalPathType,
     DrivingStatus,
 )
-from arth_rca.cpm.calendar import CalendarEngine, build_calendar_engine_map
+from arth_rca.cpm.calendar import (
+    CalendarEngine,
+    build_calendar_engine_map,
+    parse_p6_clndr_data,
+)
 from arth_rca.cpm.engine import run_cpm
 
 __all__ = [
@@ -32,5 +36,6 @@ __all__ = [
     "DrivingStatus",
     "CalendarEngine",
     "build_calendar_engine_map",
+    "parse_p6_clndr_data",
     "run_cpm",
 ]

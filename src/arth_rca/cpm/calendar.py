@@ -5,7 +5,40 @@ Supports standard workweek patterns, shift hours, exceptions, and P6 clndr_data 
 
 from datetime import datetime, date, time, timedelta
 from typing import Set, Dict, Optional, Tuple
+import re
 from arth_rca.cpm.types import CPMCalendarInput
+
+
+def parse_p6_clndr_data(clndr_data: Optional[str]) -> Tuple[Set[int], Set[date]]:
+    """
+    Parse native Primavera P6 clndr_data blob to extract:
+    1. DaysOfWeek working pattern (0=Mon .. 6=Sun)
+    2. Holiday / Exception dates (converted from Windows/Excel serial dates)
+    """
+    if not clndr_data:
+        return {0, 1, 2, 3, 4}, set()
+
+    working_days: Set[int] = set()
+    holidays: Set[date] = set()
+    
+    # P6 days: 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday
+    # Python weekday: Monday=0, ..., Sunday=6
+    p6_to_py_weekday = {1: 6, 2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5}
+
+    for p6_day in range(1, 8):
+        m = re.search(rf'\(0\|\|{p6_day}\(\)\((.*?)\)\)', clndr_data, re.DOTALL)
+        if m and "(s|" in m.group(1):
+            working_days.add(p6_to_py_weekday[p6_day])
+
+    if not working_days:
+        working_days = {0, 1, 2, 3, 4}
+
+    # Extract Exceptions (serial date numbers)
+    for serial in re.findall(r'\(d\|(\d+)\)', clndr_data):
+        dt = datetime(1899, 12, 30) + timedelta(days=int(serial))
+        holidays.add(dt.date())
+
+    return working_days, holidays
 
 
 class CalendarEngine:
@@ -47,7 +80,6 @@ class CalendarEngine:
         if duration_days <= 0.0:
             return start_dt
 
-        # Ensure start_dt is on a valid work day
         curr = start_dt.date()
         while not self.is_work_day(curr):
             curr += timedelta(days=1)
@@ -55,7 +87,6 @@ class CalendarEngine:
         days_to_add = int(duration_days)
         fraction = duration_days - days_to_add
 
-        # N full working days means (N - 1) day hops
         remaining_hops = max(0, days_to_add - 1)
         while remaining_hops > 0:
             curr += timedelta(days=1)
@@ -69,7 +100,6 @@ class CalendarEngine:
         """
         Subtract work duration from end_dt.
         For Late Finish on Tuesday 17:00 with 2 days duration, Late Start is Monday 08:00.
-        For Late Finish on Monday 17:00 with 1 day duration, Late Start is Monday 08:00.
         """
         if duration_days <= 0.0:
             return end_dt
@@ -91,10 +121,7 @@ class CalendarEngine:
         return datetime.combine(curr, time(start_hour, 0))
 
     def advance_work_days(self, dt: datetime, offset_days: float) -> datetime:
-        """
-        Advance date by offset_days (used for relationship lags).
-        e.g. Thu 08:00 + 1 day lag -> Fri 08:00.
-        """
+        """Advance date by offset_days (used for relationship lags)."""
         if offset_days == 0.0:
             return dt
 
@@ -122,12 +149,7 @@ class CalendarEngine:
         return self.advance_work_days(dt, -offset_days)
 
     def work_days_between(self, start_dt: datetime, end_dt: datetime) -> float:
-        """
-        Count the number of working days difference between start_dt and end_dt.
-        If start_dt.date() == end_dt.date() -> 0.0
-        If end_dt > start_dt -> positive count of work days
-        If start_dt > end_dt -> negative count of work days
-        """
+        """Count the number of working days difference between start_dt and end_dt."""
         d1 = start_dt.date()
         d2 = end_dt.date()
 
@@ -135,7 +157,6 @@ class CalendarEngine:
             return 0.0
 
         if d1 > d2:
-            # Negative float
             curr = d2
             count = 0
             while curr < d1:
@@ -144,7 +165,6 @@ class CalendarEngine:
                 curr += timedelta(days=1)
             return -float(count)
 
-        # Positive float
         curr = d1
         count = 0
         while curr < d2:

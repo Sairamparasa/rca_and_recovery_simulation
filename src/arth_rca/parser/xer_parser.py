@@ -40,7 +40,6 @@ class XERParser:
         if not path.exists():
             raise XERParserError(f"XER file not found: {file_path}")
 
-        # Try utf-8 first, fallback to windows-1252 / latin-1
         for encoding in ["utf-8", "cp1252", "latin-1"]:
             try:
                 with open(path, "r", encoding=encoding) as f:
@@ -100,7 +99,6 @@ class XERParser:
                     raise XERParserError(f"Line {line_num}: %R record encountered before %F field headers")
 
                 values = parts[1:]
-                # Pad values if line had trailing empty tabs
                 if len(values) < len(current_fields):
                     values.extend([""] * (len(current_fields) - len(values)))
                 elif len(values) > len(current_fields):
@@ -110,7 +108,6 @@ class XERParser:
                 raw_tables[current_table].append(record)
 
             elif tag == "%E":
-                # End of export marker
                 break
 
         parsed = XERParsedFile(header=header, raw_tables=raw_tables)
@@ -125,7 +122,6 @@ class XERParser:
             if not proj_id:
                 continue
             
-            # Map P6 sched_options or individual columns
             f_calc_mode_raw = row.get("f_calc_mode", row.get("float_calc_mode", "CS_Start")).upper()
             if "FINISH" in f_calc_mode_raw or "CS_FINISH" in f_calc_mode_raw:
                 f_calc_mode = "FINISH_DATES"
@@ -194,11 +190,14 @@ class XERParser:
                 raw_fields=row,
             )
 
-        # 4. Tasks (Activities)
+        # 4. Tasks (Activities) - supports both *drtn* and *durn* spellings
         for row in parsed.raw_tables.get("TASK", []):
             task_id = parse_int(row.get("task_id"))
             if not task_id:
                 continue
+            target_durn = parse_float(row.get("target_drtn_hr_cnt") or row.get("target_durn_hr_cnt", "0.0"))
+            remain_durn = parse_float(row.get("remain_drtn_hr_cnt") or row.get("remain_durn_hr_cnt", "0.0"))
+
             parsed.tasks[task_id] = XERTask(
                 task_id=task_id,
                 proj_id=parse_int(row.get("proj_id")),
@@ -208,8 +207,8 @@ class XERParser:
                 task_name=row.get("task_name", ""),
                 task_type=row.get("task_type", "TT_Task"),
                 status_code=row.get("status_code", "TK_NotStart"),
-                target_durn_hr_cnt=parse_float(row.get("target_durn_hr_cnt", "0.0")),
-                remain_durn_hr_cnt=parse_float(row.get("remain_durn_hr_cnt", "0.0")),
+                target_durn_hr_cnt=target_durn,
+                remain_durn_hr_cnt=remain_durn,
                 act_work_qty=parse_float(row.get("act_work_qty", "0.0")),
                 phys_complete_pct=parse_float(row.get("phys_complete_pct", "0.0")),
                 target_start_date=parse_p6_date(row.get("target_start_date")),
@@ -233,11 +232,12 @@ class XERParser:
                 raw_fields=row,
             )
 
-        # 5. Predecessors / Relationships
+        # 5. Predecessors
         for row in parsed.raw_tables.get("TASKPRED", []):
             pred_id = parse_int(row.get("task_pred_id"))
             if not pred_id:
                 continue
+            lag = parse_float(row.get("lag_drtn_hr_cnt") or row.get("lag_hr_cnt", "0.0"))
             parsed.predecessors.append(
                 XERPredecessor(
                     task_pred_id=pred_id,
@@ -245,7 +245,7 @@ class XERParser:
                     pred_task_id=parse_int(row.get("pred_task_id")),
                     proj_id=parse_int(row.get("proj_id")),
                     pred_type=row.get("pred_type", "PR_FS"),
-                    lag_hr_cnt=parse_float(row.get("lag_hr_cnt", "0.0")),
+                    lag_hr_cnt=lag,
                     comments=row.get("comments"),
                     raw_fields=row,
                 )

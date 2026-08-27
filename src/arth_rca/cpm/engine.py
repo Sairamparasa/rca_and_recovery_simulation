@@ -24,6 +24,17 @@ from arth_rca.cpm.types import (
 from arth_rca.cpm.calendar import build_calendar_engine_map, CalendarEngine
 
 
+# Comprehensive Primavera P6 Constraint Mappings
+EARLY_START_CONSTRAINTS = {"CS_START", "CS_SSO", "CS_MSOA", "CS_SNET"}
+MANDATORY_START_CONSTRAINTS = {"CS_MANDSTART", "CS_MSTART"}
+
+EARLY_FINISH_CONSTRAINTS = {"CS_FINISH", "CS_FSO", "CS_MEOA", "CS_FNET"}
+MANDATORY_FINISH_CONSTRAINTS = {"CS_MANDEND", "CS_MANDFIN", "CS_MEND"}
+
+LATE_FINISH_CONSTRAINTS = {"CS_FINISH", "CS_FSB", "CS_MEOB", "CS_FNLT"}
+LATE_START_CONSTRAINTS = {"CS_START", "CS_SSB", "CS_MSOB", "CS_SNLT"}
+
+
 def run_cpm(
     activities: Dict[int, CPMActivityInput],
     relationships: List[CPMRelationshipInput],
@@ -90,7 +101,6 @@ def run_cpm(
             continue
         elif act.status == "IN_PROGRESS" and act.act_start_date:
             es = act.act_start_date
-            # Remaining duration scheduled from data_date (or act_start_date if data_date earlier)
             base_date = max(act.act_start_date, options.data_date)
             ef = cal.add_work_days(base_date, duration)
             early_starts[task_id] = es
@@ -109,13 +119,11 @@ def run_cpm(
             pred_ef = early_finishes.get(pred_id, options.data_date)
             pred_cal = cal_map.get(pred_act.calendar_id, default_cal)
 
-            # Check Out-of-Sequence Mode
             if options.oos_mode == OOSMode.PROGRESS_OVERRIDE and pred_act.status == "NOT_STARTED" and act.status == "IN_PROGRESS":
                 continue
 
             lag_days = rel.lag_days
             if rel.rel_type == "FS":
-                # Finish to Start: Succ ES >= Pred EF + Lag (aligned to next work morning if EF at evening)
                 if pred_ef.hour >= 17:
                     next_morning = cal.align_to_work_day_start(pred_ef + timedelta(days=1))
                 else:
@@ -124,40 +132,36 @@ def run_cpm(
                 candidate_es_list.append((target_start, rel))
 
             elif rel.rel_type == "SS":
-                # Start to Start: Succ ES >= Pred ES + Lag
                 target_start = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
                 candidate_es_list.append((target_start, rel))
 
             elif rel.rel_type == "FF":
-                # Finish to Finish: Succ EF >= Pred EF + Lag
                 target_finish = cal.advance_work_days(pred_ef, lag_days) if lag_days != 0.0 else pred_ef
                 implied_es = cal.subtract_work_days(target_finish, duration)
                 candidate_es_list.append((implied_es, rel))
 
             elif rel.rel_type == "SF":
-                # Start to Finish: Succ EF >= Pred ES + Lag
                 target_finish = cal.advance_work_days(pred_es, lag_days) if lag_days != 0.0 else pred_es
                 implied_es = cal.subtract_work_days(target_finish, duration)
                 candidate_es_list.append((implied_es, rel))
 
-        # Determine Maximum Early Start
         max_es = max(item[0] for item in candidate_es_list)
         es = cal.align_to_work_day_start(max_es)
 
         # 1.3 Apply Early Constraints
-        if act.cstr_type == "CS_MANDSTART" and act.cstr_date:
+        if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
             es = act.cstr_date
-        elif act.cstr_type in ("CS_START", "CS_SSO") and act.cstr_date:
+        elif act.cstr_type in EARLY_START_CONSTRAINTS and act.cstr_date:
             if act.cstr_date > es:
                 es = act.cstr_date
 
         ef = cal.add_work_days(es, duration)
 
         # 1.4 Apply Early Finish Constraints
-        if act.cstr_type == "CS_MANDEND" and act.cstr_date:
+        if act.cstr_type in MANDATORY_FINISH_CONSTRAINTS and act.cstr_date:
             ef = act.cstr_date
             es = cal.subtract_work_days(ef, duration)
-        elif act.cstr_type in ("CS_FINISH", "CS_FSO") and act.cstr_date:
+        elif act.cstr_type in EARLY_FINISH_CONSTRAINTS and act.cstr_date:
             if act.cstr_date > ef:
                 ef = act.cstr_date
                 es = cal.subtract_work_days(ef, duration)
@@ -165,7 +169,7 @@ def run_cpm(
         early_starts[task_id] = es
         early_finishes[task_id] = ef
 
-        # 1.5 Evaluate Driving Predecessors (Handling Ties & Overrides)
+        # 1.5 Evaluate Driving Predecessors
         for cand_date, rel in candidate_es_list:
             if rel is not None:
                 if act.status in ("IN_PROGRESS", "COMPLETED") and act.act_start_date:
@@ -209,7 +213,6 @@ def run_cpm(
         cal = cal_map.get(act.calendar_id, default_cal)
         duration = max(0.0, act.remaining_duration_days)
 
-        # If completed with actuals, late dates equal actual dates
         if act.status == "COMPLETED" and act.act_start_date and act.act_finish_date:
             late_starts[task_id] = act.act_start_date
             late_finishes[task_id] = act.act_finish_date
@@ -228,24 +231,20 @@ def run_cpm(
                 lag_days = rel.lag_days
 
                 if rel.rel_type == "FS":
-                    # Pred LF <= Succ LS - Lag (aligned to work evening of previous work day)
                     target_start = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
                     prev_evening = cal.align_to_work_day_end(target_start - timedelta(days=1))
                     candidate_lf_list.append(prev_evening)
 
                 elif rel.rel_type == "SS":
-                    # Pred LS <= Succ LS - Lag -> Implied LF = LS + duration
                     target_ls = cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
                     implied_lf = cal.add_work_days(target_ls, duration)
                     candidate_lf_list.append(implied_lf)
 
                 elif rel.rel_type == "FF":
-                    # Pred LF <= Succ LF - Lag
                     target_lf = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
                     candidate_lf_list.append(target_lf)
 
                 elif rel.rel_type == "SF":
-                    # Pred LS <= Succ LF - Lag -> Implied LF = LS + duration
                     target_ls = cal.recede_work_days(succ_lf, lag_days) if lag_days != 0.0 else succ_lf
                     implied_lf = cal.add_work_days(target_ls, duration)
                     candidate_lf_list.append(implied_lf)
@@ -254,19 +253,19 @@ def run_cpm(
         lf = cal.align_to_work_day_end(min_lf)
 
         # 2.1 Apply Late Finish Constraints
-        if act.cstr_type == "CS_MANDEND" and act.cstr_date:
+        if act.cstr_type in MANDATORY_FINISH_CONSTRAINTS and act.cstr_date:
             lf = act.cstr_date
-        elif act.cstr_type in ("CS_FINISH", "CS_FSB") and act.cstr_date:
+        elif act.cstr_type in LATE_FINISH_CONSTRAINTS and act.cstr_date:
             if act.cstr_date < lf:
                 lf = act.cstr_date
 
         ls = cal.subtract_work_days(lf, duration)
 
         # 2.2 Apply Late Start Constraints
-        if act.cstr_type == "CS_MANDSTART" and act.cstr_date:
+        if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
             ls = act.cstr_date
             lf = cal.add_work_days(ls, duration)
-        elif act.cstr_type in ("CS_START", "CS_SSB") and act.cstr_date:
+        elif act.cstr_type in LATE_START_CONSTRAINTS and act.cstr_date:
             if act.cstr_date < ls:
                 ls = act.cstr_date
                 lf = cal.add_work_days(ls, duration)

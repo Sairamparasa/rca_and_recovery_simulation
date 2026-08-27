@@ -1,7 +1,6 @@
 """
 CRITICAL VALIDATION TEST SUITE:
-Verifies 100% exact match (to the day) between the deterministic CPM engine output
-and the native P6-calculated values across 3 real/benchmark schedule fixtures.
+Verifies CPM engine output against Primavera P6 schedules with rich per-activity discrepancy diagnostics.
 """
 
 from pathlib import Path
@@ -18,27 +17,26 @@ from arth_rca.cpm.types import (
     OOSMode,
     CriticalPathType,
 )
+from arth_rca.cpm.calendar import parse_p6_clndr_data
 from arth_rca.cpm.engine import run_cpm
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+XER_FILES_DIR = Path(__file__).parent.parent / "xer_files"
 
 FIXTURE_FILES = [
-    "fixture_standard_cpm.xer",
-    "fixture_multi_calendar_holidays.xer",
-    "fixture_constraints_oos.xer",
+    FIXTURES_DIR / "fixture_standard_cpm.xer",
+    FIXTURES_DIR / "fixture_multi_calendar_holidays.xer",
+    FIXTURES_DIR / "fixture_constraints_oos.xer",
 ]
 
 
-@pytest.mark.parametrize("fixture_name", FIXTURE_FILES)
-def test_cpm_exact_match_against_p6_baseline(fixture_name):
-    fixture_path = FIXTURES_DIR / fixture_name
+@pytest.mark.parametrize("fixture_path", FIXTURE_FILES)
+def test_cpm_exact_match_against_p6_baseline(fixture_path):
     parser = XERParser()
     parsed = parser.parse_file(fixture_path)
-
-    # 1. Parse Project Calculation Options
     proj = next(iter(parsed.projects.values()))
     
-    # Map project options
+    # 1. Parse Project Calculation Options
     f_calc_mode_map = {
         "START_DATES": FloatCalcMode.START_DATES,
         "FINISH_DATES": FloatCalcMode.FINISH_DATES,
@@ -59,7 +57,7 @@ def test_cpm_exact_match_against_p6_baseline(fixture_name):
         else CriticalPathType.TOTAL_FLOAT
     )
 
-    data_date = proj.plan_start_date or datetime(2026, 9, 1, 8, 0)
+    data_date = proj.last_recalc_date or proj.plan_start_date or datetime(2026, 9, 1, 8, 0)
     options = CPMOptions(
         data_date=data_date,
         f_calc_mode=f_calc_mode,
@@ -68,19 +66,24 @@ def test_cpm_exact_match_against_p6_baseline(fixture_name):
         must_finish_by_date=proj.must_finish_by_date,
     )
 
-    # 2. Build Calendars
+    # 2. Build Calendars using P6 clndr_data parser
     cals = {}
     for clndr_id, c in parsed.calendars.items():
-        # Check if 7-day or 5-day
-        working_days = {0, 1, 2, 3, 4, 5, 6} if "7" in c.clndr_name else {0, 1, 2, 3, 4}
+        if c.clndr_data:
+            wd, hol = parse_p6_clndr_data(c.clndr_data)
+        else:
+            wd = {0, 1, 2, 3, 4, 5, 6} if "7" in c.clndr_name else {0, 1, 2, 3, 4}
+            hol = set()
+
         cals[clndr_id] = CPMCalendarInput(
             clndr_id=clndr_id,
             name=c.clndr_name,
-            working_days=working_days,
+            working_days=wd,
             work_hours_per_day=c.day_hr_cnt,
+            holidays=hol,
         )
 
-    # 3. Build Raw CPM Activities (Excluding computed fields)
+    # 3. Build Raw CPM Activities
     acts = {}
     for t_id, t in parsed.tasks.items():
         status = "NOT_STARTED"
@@ -118,7 +121,7 @@ def test_cpm_exact_match_against_p6_baseline(fixture_name):
     # 5. Execute Pure CPM Engine
     cpm_result = run_cpm(acts, rels, cals, options)
 
-    # 6. Compare Against Native P6 Expected Values
+    # 6. Detailed Diagnostics & Exact Match Check
     total_activities = len(parsed.tasks)
     matched_activities = 0
     discrepancies = []
@@ -126,7 +129,6 @@ def test_cpm_exact_match_against_p6_baseline(fixture_name):
     for t_id, expected_task in parsed.tasks.items():
         computed = cpm_result.activities[t_id]
         
-        # Expected dates from P6
         exp_es = expected_task.early_start_date.date() if expected_task.early_start_date else None
         exp_ef = expected_task.early_end_date.date() if expected_task.early_end_date else None
         exp_ls = expected_task.late_start_date.date() if expected_task.late_start_date else None
@@ -139,33 +141,44 @@ def test_cpm_exact_match_against_p6_baseline(fixture_name):
         comp_lf = computed.late_finish.date()
         comp_tf_days = computed.total_float_days
 
-        is_match = (
-            comp_es == exp_es
-            and comp_ef == exp_ef
-            and comp_ls == exp_ls
-            and comp_lf == exp_lf
-            and comp_tf_days == exp_tf_days
-        )
+        field_diffs = {}
+        if comp_es != exp_es:
+            field_diffs["ES"] = {"expected": exp_es, "computed": comp_es}
+        if comp_ef != exp_ef:
+            field_diffs["EF"] = {"expected": exp_ef, "computed": comp_ef}
+        if comp_ls != exp_ls:
+            field_diffs["LS"] = {"expected": exp_ls, "computed": comp_ls}
+        if comp_lf != exp_lf:
+            field_diffs["LF"] = {"expected": exp_lf, "computed": comp_lf}
+        if comp_tf_days != exp_tf_days:
+            field_diffs["TF"] = {"expected": exp_tf_days, "computed": comp_tf_days, "delta_days": comp_tf_days - exp_tf_days}
 
-        if is_match:
+        if not field_diffs:
             matched_activities += 1
         else:
             discrepancies.append({
                 "task_code": expected_task.task_code,
-                "expected": {"ES": exp_es, "EF": exp_ef, "LS": exp_ls, "LF": exp_lf, "TF": exp_tf_days},
-                "computed": {"ES": comp_es, "EF": comp_ef, "LS": comp_ls, "LF": comp_lf, "TF": comp_tf_days},
+                "task_name": expected_task.task_name,
+                "status": expected_task.status_code,
+                "diffs": field_diffs,
             })
 
     match_rate = (matched_activities / total_activities) * 100.0
-    print(f"\n--- Validation Report for {fixture_name} ---")
+    print(f"\n=======================================================")
+    print(f"CPM VALIDATION REPORT: {fixture_path.name}")
     print(f"Total Activities: {total_activities} | Matched: {matched_activities} | Match Rate: {match_rate:.2f}%")
+    print(f"=======================================================")
 
     if discrepancies:
         print(f"Discrepancies found in {len(discrepancies)} activities:")
-        for disc in discrepancies:
-            print(f"  Activity {disc['task_code']}:")
-            print(f"    Expected: {disc['expected']}")
-            print(f"    Computed: {disc['computed']}")
+        for disc in discrepancies[:10]:
+            print(f"  [MISMATCH] Task {disc['task_code']} ({disc['status']}):")
+            for field_name, diff_info in disc["diffs"].items():
+                print(f"    - {field_name}: Computed={diff_info.get('computed')} vs Expected={diff_info.get('expected')}")
+        if len(discrepancies) > 10:
+            print(f"  ... and {len(discrepancies) - 10} more mismatched activities.")
 
-    # MANDATORY ASSERTION: 100% EXACT MATCH REQUIRED
-    assert match_rate == 100.0, f"CPM Validation failed on {fixture_name}. Match rate: {match_rate:.2f}% (Expected 100.0%)"
+    assert match_rate == 100.0, (
+        f"CPM Validation failed on {fixture_path.name}. Match rate: {match_rate:.2f}% (Expected 100.0%). "
+        f"{len(discrepancies)} discrepancies reported above."
+    )
