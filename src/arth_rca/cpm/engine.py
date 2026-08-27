@@ -246,7 +246,8 @@ def run_cpm(
     for task_id in reverse_topo_order:
         act = activities[task_id]
         cal = cal_map.get(act.calendar_id, default_cal)
-        duration = 0.0 if act.status == "COMPLETED" else max(0.0, act.remaining_duration_days)
+        is_completed = act.status == "COMPLETED"
+        duration = 0.0 if is_completed else max(0.0, act.remaining_duration_days)
         task_data_date = (
             project_data_dates.get(getattr(act, "proj_id", 0), options.data_date)
             if project_data_dates
@@ -268,7 +269,9 @@ def run_cpm(
                 pred_cal = cal
                 lag_days = rel.lag_days
 
-                if rel.rel_type == "FS":
+                if is_completed and succ_act.status == "COMPLETED":
+                    candidate_lf_list.append(succ_ls)
+                elif rel.rel_type == "FS":
                     target_start = pred_cal.recede_work_days(succ_ls, lag_days) if lag_days != 0.0 else succ_ls
                     if succ_act.is_milestone or succ_ls.hour >= 17:
                         candidate_lf_list.append(target_start)
@@ -291,25 +294,28 @@ def run_cpm(
                     candidate_lf_list.append(implied_lf)
 
         min_lf = min(candidate_lf_list) if candidate_lf_list else project_late_anchor
-        lf = cal.align_to_work_day_end(min_lf)
+        lf = cal.align_to_work_day_end(min_lf) if not is_completed else min_lf
 
-        # 2.1 Apply Late Finish Constraints
-        if act.cstr_type in MANDATORY_FINISH_CONSTRAINTS and act.cstr_date:
-            lf = act.cstr_date
-        elif act.cstr_type in LATE_FINISH_CONSTRAINTS and act.cstr_date:
-            if act.cstr_date < lf:
+        if not is_completed:
+            # 2.1 Apply Late Finish Constraints
+            if act.cstr_type in MANDATORY_FINISH_CONSTRAINTS and act.cstr_date:
                 lf = act.cstr_date
+            elif act.cstr_type in LATE_FINISH_CONSTRAINTS and act.cstr_date:
+                if act.cstr_date < lf:
+                    lf = act.cstr_date
 
-        ls = cal.subtract_work_days(lf, duration)
+            ls = cal.subtract_work_days(lf, duration)
 
-        # 2.2 Apply Late Start Constraints
-        if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
-            ls = act.cstr_date
-            lf = cal.add_work_days(ls, duration)
-        elif act.cstr_type in LATE_START_CONSTRAINTS and act.cstr_date:
-            if act.cstr_date < ls:
+            # 2.2 Apply Late Start Constraints
+            if act.cstr_type in MANDATORY_START_CONSTRAINTS and act.cstr_date:
                 ls = act.cstr_date
                 lf = cal.add_work_days(ls, duration)
+            elif act.cstr_type in LATE_START_CONSTRAINTS and act.cstr_date:
+                if act.cstr_date < ls:
+                    ls = act.cstr_date
+                    lf = cal.add_work_days(ls, duration)
+        else:
+            ls = lf
 
         late_starts[task_id] = ls
         late_finishes[task_id] = lf
@@ -356,6 +362,17 @@ def run_cpm(
         if act.status == "COMPLETED":
             tf = 0.0
             ff = 0.0
+        elif act.status == "IN_PROGRESS":
+            finish_float = cal.work_days_between(ef, lf)
+            tf = finish_float
+            ff_candidates: List[float] = []
+            for rel in succ_rels[task_id]:
+                succ_id = rel.succ_task_id
+                succ_es = early_starts.get(succ_id, ef)
+                succ_cal = cal_map.get(activities[succ_id].calendar_id, default_cal)
+                gap = succ_cal.work_days_between(ef, succ_es) - rel.lag_days
+                ff_candidates.append(max(0.0, gap))
+            ff = min(ff_candidates) if ff_candidates else max(0.0, tf)
         else:
             start_float = cal.work_days_between(es, ls)
             finish_float = cal.work_days_between(ef, lf)
