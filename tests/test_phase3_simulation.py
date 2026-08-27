@@ -116,6 +116,63 @@ def test_safety_gate_strictly_rejects_hard_and_unclassified_fasttrack():
     assert "UNCLASSIFIED" in str(exc_info.value)
 
 
+def test_scoped_preview_and_full_pass_agreement_on_single_chain():
+    """
+    Acceptance Criterion 2 (Agreement Case):
+    Confirm a scoped single-lever preview and the full-schedule recomputation
+    agree identically in the simple case where no parallel path shift occurs.
+    """
+    cal = CPMCalendarInput(clndr_id=1, name="Standard", working_days=[0, 1, 2, 3, 4], work_hours_per_day=8.0)
+    options = CPMOptions(data_date=datetime(2026, 9, 1))
+
+    acts = {
+        1: CPMActivityInput(task_id=1, task_code="A", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+        2: CPMActivityInput(task_id=2, task_code="B", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+    }
+    rels = [CPMRelationshipInput(rel_id=1, pred_task_id=1, succ_task_id=2, rel_type="FS", lag_days=0.0)]
+
+    crash_lever = CrashLever(task_code="A", reduction_days=2.0)
+    sim_res, diff = run_simulation(acts, rels, {1: cal}, options, [crash_lever])
+
+    assert diff.days_recovered == 2.0
+    assert diff.critical_path_shifted is False
+    assert sim_res.activities[2].early_finish == datetime(2026, 9, 10, 17, 0)
+
+
+def test_batch_fasttrack_rejection_across_all_code_paths():
+    """
+    Acceptance Criterion 1 (Batch/Bulk Rejection):
+    Confirm that batch requests containing even a single unsafe or UNCLASSIFIED
+    relationship are rejected atomically before mutating the schedule graph.
+    """
+    cal = CPMCalendarInput(clndr_id=1, name="Standard", working_days=[0, 1, 2, 3, 4], work_hours_per_day=8.0)
+    options = CPMOptions(data_date=datetime(2026, 9, 1))
+
+    acts = {
+        1: CPMActivityInput(task_id=1, task_code="A", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+        2: CPMActivityInput(task_id=2, task_code="B", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+        3: CPMActivityInput(task_id=3, task_code="C", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+    }
+    rels = [
+        CPMRelationshipInput(rel_id=1, pred_task_id=1, succ_task_id=2, rel_type="FS", lag_days=0.0),
+        CPMRelationshipInput(rel_id=2, pred_task_id=2, succ_task_id=3, rel_type="FS", lag_days=0.0),
+    ]
+    k_ab = generate_relationship_key("A", "B", "FS")
+    k_bc = generate_relationship_key("B", "C", "FS")
+    class_map = {
+        k_ab: RelationshipClassification(relationship_key=k_ab, project_id=1, constraint_type="SOFT_RESOURCE", confidence=0.90),
+        k_bc: RelationshipClassification(relationship_key=k_bc, project_id=1, constraint_type="HARD_REGULATORY", confidence=0.90),
+    }
+
+    # Batch lever list: first is valid SOFT_RESOURCE, second is HARD_REGULATORY
+    l1 = FastTrackLever(pred_task_code="A", succ_task_code="B", new_relationship_type="SS", new_lag_days=1.0)
+    l2 = FastTrackLever(pred_task_code="B", succ_task_code="C", new_relationship_type="SS", new_lag_days=1.0)
+
+    with pytest.raises(SafetyViolationError) as exc_info:
+        run_simulation(acts, rels, {1: cal}, options, [l1, l2], class_map)
+    assert "HARD_REGULATORY" in str(exc_info.value)
+
+
 def test_parallel_path_shift_caught_by_full_schedule_pass():
     """
     Acceptance Criterion 2:
