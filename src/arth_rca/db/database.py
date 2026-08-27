@@ -24,12 +24,24 @@ def create_db_engine(db_url: Optional[str] = None, echo: bool = False) -> Engine
     return create_engine(url, echo=echo, connect_args=connect_args)
 
 
-def init_db(engine: Engine) -> None:
+default_engine = create_db_engine()
+SessionLocal = lambda: Session(default_engine)
+
+
+def init_db(engine: Optional[Engine] = None) -> None:
     """Create all tables in the database if they do not exist."""
-    SQLModel.metadata.create_all(engine)
+    eng = engine or default_engine
+    SQLModel.metadata.create_all(eng)
 
 
-def get_session(engine: Engine) -> Generator[Session, None, None]:
+def get_session(engine: Optional[Engine] = None) -> Generator[Session, None, None]:
     """Yield database session."""
-    with Session(engine) as session:
+    eng = engine or default_engine
+    with Session(eng) as session:
+        yield session
+
+
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency for database session."""
+    with Session(default_engine) as session:
         yield session
