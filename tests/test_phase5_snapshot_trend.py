@@ -362,9 +362,16 @@ def test_snapshot_diff_and_trend_api_endpoints(client, test_db):
     assert diff_data["snapshot_b_id"] == 202
     assert diff_data["modified_activities_count"] == 1
 
-    # Test Trend API
+    # Test Trend API (Project endpoint)
     res_trend = client.get("/api/v1/projects/200/trend")
     assert res_trend.status_code == 200
     trend_data = res_trend.json()
     assert trend_data["project_id"] == 200
     assert trend_data["total_snapshots"] == 2
+
+    # Test Trend API (Snapshot endpoint per Section 8/10 Scope 5)
+    res_snap_trend = client.get("/api/v1/snapshots/202/trend")
+    assert res_snap_trend.status_code == 200
+    snap_trend_data = res_snap_trend.json()
+    assert snap_trend_data["project_id"] == 200
+    assert snap_trend_data["total_snapshots"] == 2

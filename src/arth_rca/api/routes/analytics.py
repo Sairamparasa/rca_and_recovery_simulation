@@ -431,3 +431,20 @@ def get_project_historical_trend(
 
     return aggregate_historical_trends(project_id=project_id, snapshots=packages)
 
+
+@router.get("/snapshots/{snapshot_id}/trend", response_model=HistoricalTrendPayload)
+def get_snapshot_historical_trend(
+    snapshot_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve historical trend data across all sequential snapshots up to the given snapshot.
+    Resolves project_id from snapshot and delegates to aggregate_historical_trends.
+    Strictly historical facts and point-to-point diffs (zero extrapolation).
+    """
+    snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    return get_project_historical_trend(project_id=snap.project_id, db=db)
+
