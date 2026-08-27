@@ -61,12 +61,14 @@ def detect_negative_float_drivers(
     4. Traverse forward from each driver head along driving paths to build the blast radius tree.
     5. Flag convergence nodes (activities reachable by >1 driver head).
     """
-    # 1. Collect negative float activities (exclude COMPLETED tasks)
+    # 1. Collect negative float activities (exclude COMPLETED, WBS summary, and LOE tasks)
     neg_float_tasks: Dict[int, CPMActivityResult] = {}
     for task_id, res in cpm_result.activities.items():
         raw_t = raw_tasks.get(task_id)
         status = getattr(raw_t, "status_code", "") if raw_t else ""
-        if status != "TK_Complete" and res.total_float_days < negative_float_threshold_days:
+        task_type = getattr(raw_t, "task_type", "") if raw_t else ""
+        is_summary = task_type in ("TT_WBS", "TT_LOE")
+        if status != "TK_Complete" and not is_summary and res.total_float_days < negative_float_threshold_days:
             neg_float_tasks[task_id] = res
 
     if not neg_float_tasks:

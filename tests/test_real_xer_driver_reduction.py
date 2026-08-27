@@ -1,7 +1,8 @@
 """
 Real XER Driver Reduction Test per Section 4 of Complete_Implementation_Plan.md.
-Tests driver identification and reduction ratio against the real 12,031-activity production schedule:
-20260304-QTS-PHX3DC1-0114DD_TFO Baseline Schedule - Current (1).xer
+Tests driver identification and reduction ratio against BOTH real production schedules:
+1. 20260304-QTS-PHX3DC1-0114DD_TFO Baseline Schedule (12,031 activities)
+2. 247011 08-18 (1).xer (13,817 activities)
 """
 
 import pytest
@@ -12,13 +13,18 @@ from arth_rca.parser.xer_parser import XERParser
 from arth_rca.cpm.types import CPMActivityInput, CPMRelationshipInput, CPMCalendarInput, CPMOptions
 from arth_rca.cpm.calendar import parse_p6_clndr_data
 from arth_rca.cpm.engine import run_cpm
-from arth_rca.analytics.driver_detection import detect_negative_float_drivers, DriverAnalysisResult
-from arth_rca.analytics.root_cause import classify_driver_root_cause
-from arth_rca.analytics.impact_scoring import calculate_driver_impact_score
+from arth_rca.analytics.driver_detection import detect_negative_float_drivers
 
 
-def test_real_schedule_driver_reduction_ratio():
-    f_path = Path("xer_files/20260304-QTS-PHX3DC1-0114DD_TFO Baseline Schedule - Current (1).xer")
+@pytest.mark.parametrize(
+    "file_rel_path, min_reduction_ratio_pct",
+    [
+        ("xer_files/247011 08-18 (1).xer", 60.0),
+        ("xer_files/20260304-QTS-PHX3DC1-0114DD_TFO Baseline Schedule - Current (1).xer", 60.0),
+    ],
+)
+def test_real_schedule_driver_reduction_ratio(file_rel_path, min_reduction_ratio_pct):
+    f_path = Path(file_rel_path)
     if not f_path.exists():
         pytest.skip(f"Real XER file not found: {f_path}")
 
@@ -102,6 +108,7 @@ def test_real_schedule_driver_reduction_ratio():
         print(f"=======================================================")
         assert driver_heads_count <= total_neg_float
         assert driver_heads_count > 0
+        assert reduction_ratio >= min_reduction_ratio_pct
     else:
         print(f"Schedule has 0 negative float activities (on-time schedule).")
         print(f"=======================================================")
