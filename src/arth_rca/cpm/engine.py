@@ -42,6 +42,7 @@ def run_cpm(
     calendars: Dict[int, CPMCalendarInput],
     options: CPMOptions,
     project_data_dates: Optional[Dict[int, datetime]] = None,
+    project_late_anchors: Optional[Dict[int, datetime]] = None,
 ) -> CPMResult:
     """
     Execute deterministic calendar-aware Critical Path Method calculations.
@@ -248,24 +249,31 @@ def run_cpm(
         cal = cal_map.get(act.calendar_id, default_cal)
         is_completed = act.status == "COMPLETED"
         duration = 0.0 if is_completed else max(0.0, act.remaining_duration_days)
+        task_proj_id = getattr(act, "proj_id", 0)
+        
         task_data_date = (
-            project_data_dates.get(getattr(act, "proj_id", 0), options.data_date)
+            project_data_dates.get(task_proj_id, options.data_date)
             if project_data_dates
             else options.data_date
+        )
+        task_late_anchor = (
+            project_late_anchors.get(task_proj_id, project_late_anchor)
+            if project_late_anchors
+            else project_late_anchor
         )
 
         candidate_lf_list: List[datetime] = []
 
         outgoing = succ_rels[task_id]
         if not outgoing:
-            candidate_lf_list.append(project_late_anchor)
+            candidate_lf_list.append(task_late_anchor)
         else:
             for rel in outgoing:
                 succ_id = rel.succ_task_id
                 succ_act = activities[succ_id]
                 succ_cal = cal_map.get(succ_act.calendar_id, default_cal)
-                succ_ls = late_starts.get(succ_id, project_late_anchor)
-                succ_lf = late_finishes.get(succ_id, project_late_anchor)
+                succ_ls = late_starts.get(succ_id, task_late_anchor)
+                succ_lf = late_finishes.get(succ_id, task_late_anchor)
                 pred_cal = cal
                 lag_days = rel.lag_days
 
@@ -293,7 +301,7 @@ def run_cpm(
                     implied_lf = pred_cal.add_work_days(target_ls, duration)
                     candidate_lf_list.append(implied_lf)
 
-        min_lf = min(candidate_lf_list) if candidate_lf_list else project_late_anchor
+        min_lf = min(candidate_lf_list) if candidate_lf_list else task_late_anchor
         lf = cal.align_to_work_day_end(min_lf) if not is_completed else min_lf
 
         if not is_completed:
