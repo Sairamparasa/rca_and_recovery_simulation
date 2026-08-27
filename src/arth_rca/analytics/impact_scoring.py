@@ -13,6 +13,8 @@ class ScoringConfig(BaseModel):
     float_magnitude_weight: float = 1.0
     milestone_weight: float = 2.0
     downstream_count_weight: float = 1.0
+    negative_float_threshold_days: float = 0.0
+    high_float_threshold_days: float = 44.0
 
 
 def calculate_driver_impact_score(
