@@ -218,6 +218,40 @@ def test_parallel_path_shift_caught_by_full_schedule_pass():
     assert diff.days_recovered == 2.0
 
 
+def test_individually_valid_levers_conflict_when_combined():
+    """
+    Acceptance Criterion 3:
+    Confirm that two levers, each completely valid when tested in isolation,
+    are rejected with CombinatorialConflictError when submitted together in combination.
+    """
+    cal = CPMCalendarInput(clndr_id=1, name="Standard", working_days=[0, 1, 2, 3, 4], work_hours_per_day=8.0)
+    options = CPMOptions(data_date=datetime(2026, 9, 1))
+
+    acts = {
+        1: CPMActivityInput(task_id=1, task_code="ACT_X", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+        2: CPMActivityInput(task_id=2, task_code="ACT_Y", calendar_id=1, original_duration_days=5.0, remaining_duration_days=5.0),
+    }
+    rels = []  # Completely independent tasks initially
+    class_map = {}
+
+    # Lever 1 (Add X -> Y link): Valid on its own
+    lever1 = LogicChangeLever(pred_task_code="ACT_X", succ_task_code="ACT_Y", action="ADD", relationship_type="FS")
+    # Verify Lever 1 runs successfully in isolation
+    sim1, diff1 = run_simulation(acts, rels, {1: cal}, options, [lever1], class_map)
+    assert diff1.status == "pending_approval"  # valid logic change
+
+    # Lever 2 (Add Y -> X link): Valid on its own
+    lever2 = LogicChangeLever(pred_task_code="ACT_Y", succ_task_code="ACT_X", action="ADD", relationship_type="FS")
+    # Verify Lever 2 runs successfully in isolation
+    sim2, diff2 = run_simulation(acts, rels, {1: cal}, options, [lever2], class_map)
+    assert diff2.status == "pending_approval"  # valid logic change
+
+    # Combined Run: Both individually valid levers together create a cycle X -> Y -> X
+    with pytest.raises(CombinatorialConflictError) as exc_info:
+        run_simulation(acts, rels, {1: cal}, options, [lever1, lever2], class_map)
+    assert "circular" in str(exc_info.value).lower() or "loop" in str(exc_info.value).lower()
+
+
 def test_combinatorial_conflicts_and_cycle_detection():
     """
     Acceptance Criterion 3 & 4 (Combinatorial Set Re-validation):
