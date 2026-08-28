@@ -35,10 +35,10 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
             <AlertTriangle size={18} color="var(--accent-rose)" />
           </div>
           <div className="mono-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "var(--accent-rose)" }}>
-            {driversData.drivers[0]?.driver_total_float_days.toFixed(1) || "-0.0"}d
+            {(driversData.drivers[0]?.driver_total_float_days ?? 0).toFixed(1)}d
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            Controls Substation Energization milestone
+            {driversData.drivers[0] ? `Critical path driver: ${driversData.drivers[0].driver_task_code}` : "No negative float delay detected"}
           </span>
         </div>
 
@@ -48,7 +48,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
             <Layers size={18} color="var(--accent-amber)" />
           </div>
           <div className="mono-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "var(--accent-amber)" }}>
-            {driversData.total_negative_float_activities} <span style={{ fontSize: "0.9rem", color: "var(--text-muted)", fontWeight: 400 }}>/ 524</span>
+            {driversData.total_negative_float_activities} <span style={{ fontSize: "0.9rem", color: "var(--text-muted)", fontWeight: 400 }}>/ {dcmaData.total_tasks_evaluated || 0}</span>
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
             Discrete tasks with TF &lt; 0.0d
@@ -64,7 +64,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
             {driversData.driver_head_count} <span style={{ fontSize: "0.9rem", color: "var(--text-muted)", fontWeight: 400 }}>Roots</span>
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            Isolates 100% of project delay to 6 root chains
+            {driversData.driver_head_count > 0 ? `Identified ${driversData.driver_head_count} root delay drivers` : "Zero driver bottlenecks"}
           </span>
         </div>
 
@@ -74,10 +74,10 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
             <CheckCircle2 size={18} color="var(--accent-emerald)" />
           </div>
           <div className="mono-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "var(--accent-emerald)" }}>
-            {dcmaData.overall_health_score.toFixed(1)}%
+            {(dcmaData.overall_health_score ?? 100).toFixed(1)}%
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            11 / 14 checks passing industry standard
+            {dcmaData.metrics.filter((m) => m.passed).length} / {dcmaData.metrics.length || 14} checks passing
           </span>
         </div>
       </div>
@@ -172,13 +172,13 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
               <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "16px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                   <span style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)" }}>
-                    Downstream Blast Radius ({selectedDriver.blast_radius_nodes.length} Nodes)
+                    Downstream Blast Radius ({selectedDriver.blast_radius_nodes?.length || 0} Nodes)
                   </span>
                   <span style={{ fontSize: "0.72rem", color: "#38bdf8" }}>Forward Driving Pass</span>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "380px", overflowY: "auto", paddingRight: "4px" }}>
-                  {selectedDriver.blast_radius_nodes.map((node) => (
+                  {(selectedDriver.blast_radius_nodes || []).map((node) => (
                     <div
                       key={node.task_code}
                       style={{
@@ -229,7 +229,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
                       </div>
 
                       <span className="mono-font" style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--accent-rose)" }}>
-                        {node.total_float_days.toFixed(1)}d
+                        {(node.total_float_days ?? 0).toFixed(1)}d
                       </span>
                     </div>
                   ))}
@@ -238,7 +238,9 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ driversData, d
             </>
           ) : (
             <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
-              Select a driver to view the forward blast radius
+              {driversData.drivers.length === 0
+                ? "No delay drivers found for this snapshot."
+                : "Select a driver to view the forward blast radius"}
             </div>
           )}
         </div>
