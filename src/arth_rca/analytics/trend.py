@@ -5,7 +5,7 @@ activity float erosion, and driver churn strictly as historical facts.
 EXPLICITLY ZERO PREDICTION, EXTRAPOLATION, OR FORECASTING.
 """
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Set
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -116,7 +116,7 @@ def aggregate_historical_trends(
 
     # 2. Run CPM and DCMA for each snapshot
     cpm_results: List[CPMResult] = []
-    dcma_results: List[DCMAResult] = []
+    dcma_results: List[DCMAAssessmentReport] = []
     meta_list: List[SnapshotMeta] = []
 
     for s in sorted_snaps:
