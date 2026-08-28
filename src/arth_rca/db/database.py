@@ -7,16 +7,19 @@ from typing import Generator, Optional
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.engine import Engine
 
-DEFAULT_POSTGRES_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/arth_rca"
+DEFAULT_SQLITE_URL = "sqlite:///arth_rca.db"
 
 
 def get_database_url() -> str:
-    """Return database URL from environment or default."""
-    return os.environ.get("DATABASE_URL", DEFAULT_POSTGRES_URL)
+    """
+    Return database URL from DATABASE_URL environment variable,
+    defaulting to local SQLite file 'arth_rca.db' in the project workspace.
+    """
+    return os.environ.get("DATABASE_URL", DEFAULT_SQLITE_URL)
 
 
 def create_db_engine(db_url: Optional[str] = None, echo: bool = False) -> Engine:
-    """Create SQLAlchemy engine."""
+    """Create SQLAlchemy engine with appropriate dialect arguments."""
     url = db_url or get_database_url()
     connect_args = {}
     if "sqlite" in url:
