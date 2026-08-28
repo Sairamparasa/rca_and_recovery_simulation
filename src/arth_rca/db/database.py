@@ -7,6 +7,8 @@ from typing import Generator, Optional
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.engine import Engine
 
+from sqlalchemy.pool import NullPool, QueuePool
+
 DEFAULT_SQLITE_URL = "sqlite:///arth_rca.db"
 
 
@@ -24,7 +26,18 @@ def create_db_engine(db_url: Optional[str] = None, echo: bool = False) -> Engine
     connect_args = {}
     if "sqlite" in url:
         connect_args["check_same_thread"] = False
-    return create_engine(url, echo=echo, connect_args=connect_args)
+        connect_args["timeout"] = 30.0
+        return create_engine(url, echo=echo, connect_args=connect_args, poolclass=NullPool)
+    else:
+        return create_engine(
+            url,
+            echo=echo,
+            connect_args=connect_args,
+            pool_size=20,
+            max_overflow=40,
+            pool_timeout=60.0,
+            pool_recycle=1800,
+        )
 
 
 default_engine = create_db_engine()

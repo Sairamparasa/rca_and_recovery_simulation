@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { OptimizationResult, ParetoPoint } from "../types/api";
 import { Zap, RefreshCw } from "lucide-react";
 
 interface RecoveryWorkspaceProps {
-  optimizationData: OptimizationResult;
+  optimizationData: OptimizationResult | null;
   onReoptimize?: (budget: number) => void;
 }
 
@@ -11,11 +11,18 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
   optimizationData,
   onReoptimize,
 }) => {
-  const [selectedPoint, setSelectedPoint] = useState<ParetoPoint>(
-    optimizationData.pareto_frontier[optimizationData.pareto_frontier.length - 1] || optimizationData.pareto_frontier[0]
+  const paretoPoints = optimizationData?.pareto_frontier || [];
+  const [selectedPoint, setSelectedPoint] = useState<ParetoPoint | null>(
+    paretoPoints.length > 0 ? paretoPoints[paretoPoints.length - 1] : null
   );
-  const [budgetLimit, setBudgetLimit] = useState<number>(optimizationData.budget_limit);
+  const [budgetLimit, setBudgetLimit] = useState<number>(optimizationData?.budget_limit || 100000);
   const [isOptimizing, setIsOptimizing] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (paretoPoints.length > 0 && (!selectedPoint || !paretoPoints.some(p => p.scenario_name === selectedPoint.scenario_name))) {
+      setSelectedPoint(paretoPoints[paretoPoints.length - 1] || paretoPoints[0]);
+    }
+  }, [optimizationData, paretoPoints]);
 
   const handleSweep = () => {
     setIsOptimizing(true);
@@ -24,8 +31,77 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
     }
     setTimeout(() => {
       setIsOptimizing(false);
-    }, 600);
+    }, 1500);
   };
+
+  if (!optimizationData || paretoPoints.length === 0) {
+    return (
+      <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+        <div className="glass-panel" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+              <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "#fff" }}>Schedule Recovery Optimization</h2>
+              <span className="tier-pill tier-simulation">[SIMULATION_DEPENDENT] Pareto Frontier</span>
+            </div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+              Combinatorial search across crash durations, safe fast-tracking, and calendar shifts.
+            </p>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>
+                Budget Limit: <strong style={{ color: "var(--accent-emerald)" }}>${budgetLimit.toLocaleString()}</strong>
+              </span>
+              <input
+                type="range"
+                min="10000"
+                max="200000"
+                step="5000"
+                value={budgetLimit}
+                onChange={(e) => setBudgetLimit(Number(e.target.value))}
+                style={{ width: "180px", accentColor: "#6366f1" }}
+              />
+            </div>
+            <button
+              onClick={handleSweep}
+              disabled={isOptimizing}
+              className="btn-primary"
+              style={{ padding: "8px 16px" }}
+            >
+              <RefreshCw size={16} className={isOptimizing ? "spin" : ""} />
+              {isOptimizing ? "Optimizing..." : "Run Optimization Solver"}
+            </button>
+          </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: "48px 24px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
+          <div style={{
+            width: "56px",
+            height: "56px",
+            borderRadius: "50%",
+            background: "rgba(99, 102, 241, 0.15)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#818cf8",
+          }}>
+            <Zap size={28} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "#fff", marginBottom: "8px" }}>
+              No Optimization Scenarios Generated Yet
+            </h3>
+            <p style={{ fontSize: "0.88rem", color: "var(--text-muted)", maxWidth: "560px", margin: "0 auto", lineHeight: "1.5" }}>
+              Click <strong>Run Optimization Solver</strong> above to generate the Time-Cost Pareto trade-off curve across crashing and safety-cleared fast-tracking levers.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const activePoint = selectedPoint || paretoPoints[0];
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -37,7 +113,7 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
             <span className="tier-pill tier-simulation">[SIMULATION_DEPENDENT] Pareto Frontier</span>
           </div>
           <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-            Solver: <strong style={{ color: "#a5b4fc" }}>{optimizationData.solver_used}</strong> • Evaluated {optimizationData.total_scenarios_evaluated} combinations in {optimizationData.execution_time_ms.toFixed(1)}ms
+            Solver: <strong style={{ color: "#a5b4fc" }}>{optimizationData.solver_used}</strong> • Evaluated {optimizationData.total_scenarios_evaluated} combinations in {(optimizationData.execution_time_ms || 0).toFixed(1)}ms
           </p>
         </div>
 
@@ -50,7 +126,7 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
             <input
               type="range"
               min="10000"
-              max="150000"
+              max="200000"
               step="5000"
               value={budgetLimit}
               onChange={(e) => setBudgetLimit(Number(e.target.value))}
@@ -78,92 +154,13 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Select a point to inspect scenario levers</span>
           </div>
 
-          {/* SVG Scatter & Curve Representation */}
-          <div style={{
-            background: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "var(--radius-md)",
-            padding: "20px",
-            border: "1px solid var(--border-subtle)",
-            position: "relative"
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "8px" }}>
-              <span>Days Recovered (Y) vs Investment Cost (X)</span>
-              <span>Floor Ceiling: 15.0 Days</span>
-            </div>
-
-            {/* Custom SVG Curve */}
-            <svg viewBox="0 0 500 220" style={{ width: "100%", height: "200px", overflow: "visible" }}>
-              {/* Grid lines */}
-              <line x1="40" y1="20" x2="480" y2="20" stroke="rgba(255,255,255,0.05)" strokeDasharray="4" />
-              <line x1="40" y1="80" x2="480" y2="80" stroke="rgba(255,255,255,0.05)" strokeDasharray="4" />
-              <line x1="40" y1="140" x2="480" y2="140" stroke="rgba(255,255,255,0.05)" strokeDasharray="4" />
-              <line x1="40" y1="190" x2="480" y2="190" stroke="rgba(255,255,255,0.15)" />
-
-              {/* Axes */}
-              <line x1="40" y1="10" x2="40" y2="190" stroke="rgba(255,255,255,0.15)" />
-              <text x="30" y="25" fill="#64748b" fontSize="10" textAnchor="end">15d</text>
-              <text x="30" y="85" fill="#64748b" fontSize="10" textAnchor="end">10d</text>
-              <text x="30" y="145" fill="#64748b" fontSize="10" textAnchor="end">5d</text>
-              <text x="30" y="193" fill="#64748b" fontSize="10" textAnchor="end">0d</text>
-
-              {/* Frontier Line Path */}
-              <path
-                d="M 50 190 L 120 156 L 220 110 L 340 54 L 460 20"
-                fill="none"
-                stroke="#818cf8"
-                strokeWidth="3"
-                strokeDasharray="2"
-              />
-
-              {/* Pareto Points */}
-              {optimizationData.pareto_frontier.map((pt, idx) => {
-                // Map coordinates
-                const xCoords = [50, 120, 220, 340, 460];
-                const yCoords = [190, 156, 110, 54, 20];
-                const cx = xCoords[idx] || 50;
-                const cy = yCoords[idx] || 190;
-                const isSelected = selectedPoint.scenario_name === pt.scenario_name;
-
-                return (
-                  <g key={pt.scenario_name} onClick={() => setSelectedPoint(pt)} style={{ cursor: "pointer" }}>
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={isSelected ? 9 : 6}
-                      fill={isSelected ? "#10b981" : "#6366f1"}
-                      stroke="#fff"
-                      strokeWidth={isSelected ? 3 : 1.5}
-                    />
-                    <text
-                      x={cx}
-                      y={cy - 12}
-                      fill={isSelected ? "#34d399" : "#94a3b8"}
-                      fontSize="10"
-                      fontWeight={isSelected ? "bold" : "normal"}
-                      textAnchor="middle"
-                    >
-                      {pt.days_recovered}d (${(pt.cost_delta / 1000).toFixed(1)}k)
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "4px" }}>
-              <span>$0 (Baseline)</span>
-              <span>$25,000</span>
-              <span>$50,000</span>
-              <span>$75,000+ (Max Feasible)</span>
-            </div>
-          </div>
-
           {/* Scenario Selection Grid */}
-          <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-            {optimizationData.pareto_frontier.map((pt) => {
-              const isSelected = selectedPoint.scenario_name === pt.scenario_name;
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {paretoPoints.map((pt, idx) => {
+              const isSelected = activePoint?.scenario_name === pt.scenario_name;
               return (
                 <div
-                  key={pt.scenario_name}
+                  key={pt.scenario_name || idx}
                   onClick={() => setSelectedPoint(pt)}
                   style={{
                     padding: "12px 16px",
@@ -179,26 +176,26 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
                 >
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{ fontWeight: 700, fontSize: "0.88rem", color: isSelected ? "#fff" : "var(--text-primary)" }}>
+                      <span className="mono-font" style={{ fontWeight: 800, color: isSelected ? "#818cf8" : "#fff", fontSize: "0.95rem" }}>
+                        Point #{idx}
+                      </span>
+                      <span style={{ fontSize: "0.85rem", color: "var(--text-primary)", fontWeight: 600 }}>
                         {pt.scenario_name}
                       </span>
-                      {pt.critical_path_shifted && (
-                        <span style={{ fontSize: "0.68rem", background: "rgba(244, 63, 94, 0.2)", color: "#fda4af", padding: "1px 6px", borderRadius: "4px", fontWeight: 600 }}>
-                          CP Shifted
-                        </span>
-                      )}
                     </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                      Finish: <strong style={{ color: "#38bdf8" }}>{pt.simulated_finish_date}</strong> • Levers Applied: {pt.levers_applied.length}
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "2px" }}>
+                      {pt.levers_applied.length} Levers Applied • Finish: <strong style={{ color: "#38bdf8" }}>{pt.simulated_finish_date}</strong>
                     </div>
                   </div>
 
-                  <div style={{ textAlign: "right" }}>
-                    <div className="mono-font" style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--accent-emerald)" }}>
-                      +{pt.days_recovered}d Recovered
-                    </div>
-                    <div className="mono-font" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                      ${pt.cost_delta.toLocaleString()}
+                  <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                    <div style={{ textAlign: "right" }}>
+                      <div className="mono-font" style={{ fontWeight: 800, color: "var(--accent-emerald)", fontSize: "0.95rem" }}>
+                        +{pt.days_recovered}d Recovered
+                      </div>
+                      <div className="mono-font" style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                        Cost: ${(pt.cost_delta || 0).toLocaleString()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -207,36 +204,39 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
           </div>
         </div>
 
-        {/* Selected Scenario Details & Applied Levers */}
+        {/* Selected Scenario Lever Inspector */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-              <span className="mono-font" style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--accent-emerald)" }}>
-                +{selectedPoint.days_recovered}.0 Days Recovered
+              <span className="tier-pill tier-simulation">Selected Scenario</span>
+              <span className="mono-font" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                Cost: <strong style={{ color: "var(--accent-emerald)" }}>${(activePoint.cost_delta || 0).toLocaleString()}</strong>
               </span>
-              <span className="tier-pill tier-simulation">${selectedPoint.cost_delta.toLocaleString()} Delta</span>
             </div>
-            <h3 style={{ fontSize: "0.98rem", fontWeight: 700, color: "#fff", marginBottom: "4px" }}>
-              {selectedPoint.scenario_name}
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "#fff", marginBottom: "4px" }}>
+              {activePoint.scenario_name}
             </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-              Project Finish moves from <strong>2026-11-20</strong> to <strong style={{ color: "#38bdf8" }}>{selectedPoint.simulated_finish_date}</strong>. {selectedPoint.discrete_delayed_recovered_count} delayed activities brought to TF &ge; 0.
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+              Recovers <strong style={{ color: "var(--accent-emerald)" }}>{activePoint.days_recovered} days</strong> of critical path delay.
             </p>
           </div>
 
-          {/* Applied Levers List */}
-          <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "16px" }}>
-            <h4 style={{ fontSize: "0.8rem", textTransform: "uppercase", fontWeight: 700, color: "var(--text-muted)", marginBottom: "12px" }}>
-              Applied Recovery Levers ({selectedPoint.levers_applied.length})
-            </h4>
+          <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "14px" }}>
+            <span style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)" }}>
+              Levers Applied ({activePoint.levers_applied.length})
+            </span>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "360px", overflowY: "auto" }}>
-              {selectedPoint.levers_applied.length > 0 ? (
-                selectedPoint.levers_applied.map((lev, idx) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px", maxHeight: "320px", overflowY: "auto" }}>
+              {activePoint.levers_applied.length === 0 ? (
+                <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", padding: "16px 0", textAlign: "center" }}>
+                  No levers applied (Baseline / Zero recovery).
+                </div>
+              ) : (
+                activePoint.levers_applied.map((lev: any, i: number) => (
                   <div
-                    key={idx}
+                    key={i}
                     style={{
-                      padding: "12px 14px",
+                      padding: "10px 12px",
                       background: "rgba(255, 255, 255, 0.02)",
                       border: "1px solid var(--border-subtle)",
                       borderRadius: "var(--radius-sm)",
@@ -245,37 +245,24 @@ export const RecoveryWorkspace: React.FC<RecoveryWorkspaceProps> = ({
                       alignItems: "center"
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <div style={{
-                        padding: "6px",
-                        background: "rgba(99, 102, 241, 0.15)",
-                        borderRadius: "6px",
-                        color: "#818cf8"
-                      }}>
-                        <Zap size={16} />
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span className="tier-pill tier-fact" style={{ fontSize: "0.65rem" }}>
+                          {lev.lever_type}
+                        </span>
+                        <span className="mono-font" style={{ fontWeight: 700, color: "#fff", fontSize: "0.82rem" }}>
+                          {lev.target_entity}
+                        </span>
                       </div>
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span className="mono-font" style={{ fontSize: "0.85rem", fontWeight: 700, color: "#fff" }}>
-                            {lev.target_entity}
-                          </span>
-                          <span className="tier-pill tier-modeled">{lev.lever_type}</span>
-                        </div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                          {lev.applied_change}
-                        </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+                        {lev.applied_change}
                       </div>
                     </div>
-
-                    <div className="mono-font" style={{ fontSize: "0.85rem", fontWeight: 700, color: "#38bdf8" }}>
-                      ${lev.cost?.toLocaleString() || 0}
-                    </div>
+                    <span className="mono-font" style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--accent-emerald)" }}>
+                      +${(lev.cost || 0).toLocaleString()}
+                    </span>
                   </div>
                 ))
-              ) : (
-                <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                  Baseline condition — No recovery levers applied
-                </div>
               )}
             </div>
           </div>

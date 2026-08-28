@@ -37,6 +37,7 @@ export function App() {
   const loadDashboardData = useCallback(async (snapId: number) => {
     setLoading(true);
     try {
+      // 1. Instant Fast Fetch: Snapshot list, Driver diagnostics, and DCMA health metrics
       const snapList = await apiService.listSnapshots();
       setSnapshots(snapList);
 
@@ -46,29 +47,26 @@ export function App() {
         ? snapList[0].snapshot_id
         : snapId;
 
+      const [drivers, dcma] = await Promise.all([
+        apiService.getDrivers(effectiveSnapId),
+        apiService.getDCMA(effectiveSnapId),
+      ]);
+
+      setDriversData(drivers);
+      setDcmaData(dcma);
+      setLoading(false); // Unblock UI immediately so user sees diagnostics
+
+      // 2. Progressive Background Fetch for secondary tabs
       const currentSnap = snapList.find((s) => s.snapshot_id === effectiveSnapId);
       const sameProjectSnaps = snapList.filter((s) => currentSnap && s.project_id === currentSnap.project_id);
       const priorSnap = sameProjectSnaps.find((s) => s.snapshot_id < effectiveSnapId);
 
-      const [drivers, dcma, opt, queue, trends, diff, report] = await Promise.all([
-        apiService.getDrivers(effectiveSnapId),
-        apiService.getDCMA(effectiveSnapId),
-        apiService.runOptimization(100000),
-        apiService.getClassificationQueue(),
-        apiService.getTrends(effectiveSnapId),
-        apiService.getSnapshotDiff(priorSnap?.snapshot_id, effectiveSnapId),
-        apiService.getNarrativeReport(effectiveSnapId),
-      ]);
-      setDriversData(drivers);
-      setDcmaData(dcma);
-      setOptimizationData(opt);
-      setClassificationQueue(queue);
-      setTrendData(trends);
-      setDiffData(diff);
-      setNarrativeReport(report);
+      apiService.getClassificationQueue(effectiveSnapId).then((q) => setClassificationQueue(q));
+      apiService.getTrends(effectiveSnapId).then((t) => setTrendData(t));
+      apiService.getSnapshotDiff(priorSnap?.snapshot_id, effectiveSnapId).then((d) => setDiffData(d));
+      apiService.getNarrativeReport(effectiveSnapId).then((r) => setNarrativeReport(r));
     } catch (err) {
       console.error("Error loading dashboard data:", err);
-    } finally {
       setLoading(false);
     }
   }, []);
@@ -94,7 +92,7 @@ export function App() {
   };
 
   const handleReoptimize = async (budget: number) => {
-    const res = await apiService.runOptimization(budget);
+    const res = await apiService.runOptimization(budget, activeSnapshotId);
     setOptimizationData(res);
   };
 
@@ -109,7 +107,7 @@ export function App() {
     );
   };
 
-  if (loading || !driversData || !dcmaData || !optimizationData || !trendData || !diffData) {
+  if (loading && !driversData) {
     return (
       <div style={{
         minHeight: "100vh",
@@ -136,15 +134,50 @@ export function App() {
     );
   }
 
+  const safeDriversData = driversData || {
+    snapshot_id: activeSnapshotId,
+    total_negative_float_activities: 0,
+    driver_head_count: 0,
+    convergence_nodes: [],
+    drivers: [],
+  };
+
+  const safeDcmaData = dcmaData || {
+    snapshot_id: activeSnapshotId,
+    data_date: "",
+    total_tasks_evaluated: 0,
+    total_relationships_evaluated: 0,
+    overall_health_score: 100.0,
+    metrics: [],
+  };
+
+  const safeTrendData = trendData || {
+    project_id: 1,
+    snapshots: [],
+    float_trends: [],
+    milestone_slippage: [],
+  };
+
+  const safeDiffData = diffData || {
+    snapshot_id_a: 0,
+    snapshot_id_b: 0,
+    added_relationships: [],
+    removed_relationships: [],
+    modified_relationships: [],
+    duration_changes: [],
+    constraint_changes: [],
+    driver_churn: { new_drivers: [], resolved_drivers: [], persistent_drivers: [] },
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-main)" }}>
       {/* Sticky Header */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        dcmaScore={dcmaData.overall_health_score}
-        criticalFloat={driversData.drivers[0]?.driver_total_float_days || 0}
-        driverCount={driversData.driver_head_count}
+        dcmaScore={safeDcmaData.overall_health_score}
+        criticalFloat={safeDriversData.drivers[0]?.driver_total_float_days || 0}
+        driverCount={safeDriversData.driver_head_count}
         onOpenUploadModal={() => setIsUploadModalOpen(true)}
         activeSnapshotId={activeSnapshotId}
         onSelectSnapshot={(id) => setActiveSnapshotId(id)}
@@ -154,7 +187,7 @@ export function App() {
       {/* Main Workspace View Container */}
       <main style={{ maxWidth: "1600px", margin: "0 auto", padding: "28px 24px 60px" }}>
         {activeTab === "drivers" && (
-          <DriverDashboard driversData={driversData} dcmaData={dcmaData} />
+          <DriverDashboard driversData={safeDriversData} dcmaData={safeDcmaData} />
         )}
 
         {activeTab === "recovery" && (
@@ -173,8 +206,8 @@ export function App() {
 
         {activeTab === "trends" && (
           <HistoricalTrendView
-            trendData={trendData}
-            diffData={diffData}
+            trendData={safeTrendData}
+            diffData={safeDiffData}
           />
         )}
 
