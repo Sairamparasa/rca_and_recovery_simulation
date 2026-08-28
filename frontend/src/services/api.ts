@@ -529,6 +529,28 @@ export const apiService = {
       { snapshot_id: 2, project_id: 2, project_name: "247011", data_date: "2026-08-12", source_filename: "247011_Update.xer", is_baseline: false, activity_count: 13817, relationship_count: 28462 },
     ];
   },
+
+  async deleteSnapshot(snapshotId: number): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/snapshots/${snapshotId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Deletion failed" }));
+      throw new Error(err.detail || "Failed to delete snapshot");
+    }
+    return await res.json();
+  },
+
+  async setSnapshotBaseline(snapshotId: number, isBaseline: boolean): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/snapshots/${snapshotId}/baseline?is_baseline=${isBaseline}`, {
+      method: "PATCH",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to update baseline status" }));
+      throw new Error(err.detail || "Failed to update baseline");
+    }
+    return await res.json();
+  },
 };
 
 export const api = apiService;

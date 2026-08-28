@@ -104,3 +104,19 @@ def test_ingestion_api_endpoints(client):
     assert list_res.status_code == 200
     snaps = list_res.json()
     assert len(snaps) >= 2
+
+    # 4. Test baseline toggle PATCH endpoint
+    snap_id = up_data["snapshot_id"]
+    patch_res = client.patch(f"/api/v1/snapshots/{snap_id}/baseline?is_baseline=true")
+    assert patch_res.status_code == 200
+    assert patch_res.json()["is_baseline"] is True
+
+    # 5. Test DELETE endpoint for snapshot removal
+    del_res = client.delete(f"/api/v1/snapshots/{snap_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["success"] is True
+
+    # Verify snapshot was removed from DB
+    list_after = client.get("/api/v1/snapshots")
+    remaining_ids = [s["snapshot_id"] for s in list_after.json()]
+    assert snap_id not in remaining_ids

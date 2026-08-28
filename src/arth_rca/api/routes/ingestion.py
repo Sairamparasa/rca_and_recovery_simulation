@@ -203,3 +203,89 @@ def list_snapshots(db: Session = Depends(get_db)):
             )
         )
     return results
+
+
+@router.delete("/{snapshot_id}")
+def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
+    """
+    Deletes an uploaded snapshot and all its associated activities, relationships,
+    DCMA health checks, and driver records.
+    Useful when a schedule was uploaded in the wrong sequence or contains erroneous data.
+    """
+    snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
+    if not snap:
+        raise HTTPException(status_code=404, detail=f"Snapshot with ID {snapshot_id} not found.")
+
+    try:
+        # 1. Fetch activity IDs for this snapshot
+        activities = db.query(Activity).filter(Activity.snapshot_id == snapshot_id).all()
+        act_ids = [a.id for a in activities if a.id is not None]
+
+        # 2. Delete ActivityResource records
+        if act_ids:
+            from arth_rca.db.models import ActivityResource
+            db.query(ActivityResource).filter(ActivityResource.activity_id.in_(act_ids)).delete(synchronize_session=False)
+
+        # 3. Delete Relationships
+        db.query(Relationship).filter(Relationship.snapshot_id == snapshot_id).delete(synchronize_session=False)
+
+        # 4. Delete Activities
+        db.query(Activity).filter(Activity.snapshot_id == snapshot_id).delete(synchronize_session=False)
+
+        # 5. Delete DCMAHealthChecks
+        from arth_rca.db.models import DCMAHealthCheck
+        db.query(DCMAHealthCheck).filter(DCMAHealthCheck.snapshot_id == snapshot_id).delete(synchronize_session=False)
+
+        # 6. Delete DriverRecords
+        from arth_rca.db.models import DriverRecord
+        db.query(DriverRecord).filter(DriverRecord.snapshot_id == snapshot_id).delete(synchronize_session=False)
+
+        # 7. Delete Snapshot
+        db.delete(snap)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Snapshot #{snapshot_id} ('{snap.source_filename}') and all associated records deleted successfully.",
+            "deleted_snapshot_id": snapshot_id,
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete snapshot #{snapshot_id}: {str(e)}")
+
+
+@router.patch("/{snapshot_id}/baseline")
+def set_snapshot_baseline(
+    snapshot_id: int,
+    is_baseline: bool,
+    db: Session = Depends(get_db),
+):
+    """
+    Updates the baseline status of a snapshot.
+    """
+    snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
+    if not snap:
+        raise HTTPException(status_code=404, detail=f"Snapshot with ID {snapshot_id} not found.")
+
+    try:
+        # If marking this snapshot as baseline, optionally unmark others for the same project
+        if is_baseline:
+            db.query(Snapshot).filter(
+                Snapshot.project_id == snap.project_id,
+                Snapshot.id != snapshot_id,
+            ).update({"is_baseline": False})
+
+        snap.is_baseline = is_baseline
+        db.add(snap)
+        db.commit()
+        db.refresh(snap)
+
+        return {
+            "success": True,
+            "snapshot_id": snap.id,
+            "is_baseline": snap.is_baseline,
+            "message": f"Snapshot #{snapshot_id} baseline status updated to {is_baseline}.",
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update baseline status: {str(e)}")

@@ -1,19 +1,24 @@
-import React, { useState, useRef } from "react";
-import { Upload, X, CheckCircle, AlertTriangle, FileText, Loader2, ArrowRight } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { Upload, X, CheckCircle, AlertTriangle, FileText, Loader2, ArrowRight, Trash2, Shield, Layers } from "lucide-react";
 import { api } from "../services/api";
-import type { IngestionSummaryResponse } from "../types/api";
+import type { IngestionSummaryResponse, SnapshotListItem } from "../types/api";
 
 interface UploadSnapshotModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSnapshotIngested: (summary: IngestionSummaryResponse) => void;
+  onSnapshotDeleted?: (deletedId: number) => void;
+  activeSnapshotId?: number;
 }
 
 export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
   isOpen,
   onClose,
   onSnapshotIngested,
+  onSnapshotDeleted,
+  activeSnapshotId = 1,
 }) => {
+  const [activeTab, setActiveTab] = useState<"upload" | "manage">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [orgName, setOrgName] = useState("QTS Data Centers");
   const [projectName, setProjectName] = useState("");
@@ -23,7 +28,29 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
   const [result, setResult] = useState<IngestionSummaryResponse | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // Management State
+  const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadSnapshots = async () => {
+    setLoadingSnapshots(true);
+    try {
+      const list = await api.listSnapshots();
+      setSnapshots(list);
+    } catch (_) {}
+    finally {
+      setLoadingSnapshots(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadSnapshots();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -77,11 +104,40 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
         isBaseline
       );
       setResult(res);
+      await loadSnapshots();
       onSnapshotIngested(res);
     } catch (err: any) {
       setError(err.message || "Failed to ingest schedule snapshot.");
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleDeleteSnapshot = async (id: number, filename: string) => {
+    if (!window.confirm(`Are you sure you want to delete Snapshot #${id} ('${filename}')?\nAll activities, relationships, and DCMA check data for this snapshot will be removed.`)) {
+      return;
+    }
+
+    setDeletingId(id);
+    try {
+      await api.deleteSnapshot(id);
+      await loadSnapshots();
+      if (onSnapshotDeleted) {
+        onSnapshotDeleted(id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete snapshot.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleToggleBaseline = async (id: number, currentBaseline: boolean) => {
+    try {
+      await api.setSnapshotBaseline(id, !currentBaseline);
+      await loadSnapshots();
+    } catch (err: any) {
+      alert(err.message || "Failed to update baseline status.");
     }
   };
 
@@ -116,7 +172,7 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
           border: "1px solid var(--border-subtle)",
           borderRadius: "var(--radius-lg)",
           width: "100%",
-          maxWidth: "600px",
+          maxWidth: "680px",
           overflow: "hidden",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)",
         }}
@@ -125,7 +181,7 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
         {/* Header */}
         <div
           style={{
-            padding: "20px 24px",
+            padding: "18px 24px",
             borderBottom: "1px solid var(--border-subtle)",
             display: "flex",
             alignItems: "center",
@@ -145,14 +201,14 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
                 color: "#818cf8",
               }}
             >
-              <Upload size={20} />
+              <Layers size={20} />
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#fff" }}>
-                Ingest Schedule Snapshot
+                Schedule Snapshot Hub
               </h3>
               <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                Parse Primavera P6 (.XER), validate integrity, and initialize CPM models
+                Upload new .XER schedules or manage/delete previously ingested snapshots
               </p>
             </div>
           </div>
@@ -171,9 +227,183 @@ export const UploadSnapshotModal: React.FC<UploadSnapshotModalProps> = ({
           </button>
         </div>
 
+        {/* Tab Switcher */}
+        <div style={{ display: "flex", borderBottom: "1px solid var(--border-subtle)", background: "rgba(255, 255, 255, 0.02)" }}>
+          <button
+            onClick={() => { setActiveTab("upload"); resetForm(); }}
+            style={{
+              flex: 1,
+              padding: "12px",
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "upload" ? "2px solid #818cf8" : "2px solid transparent",
+              color: activeTab === "upload" ? "#fff" : "var(--text-muted)",
+              fontWeight: activeTab === "upload" ? 600 : 500,
+              fontSize: "0.85rem",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px"
+            }}
+          >
+            <Upload size={16} /> Upload New Snapshot
+          </button>
+          <button
+            onClick={() => { setActiveTab("manage"); loadSnapshots(); }}
+            style={{
+              flex: 1,
+              padding: "12px",
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "manage" ? "2px solid #818cf8" : "2px solid transparent",
+              color: activeTab === "manage" ? "#fff" : "var(--text-muted)",
+              fontWeight: activeTab === "manage" ? 600 : 500,
+              fontSize: "0.85rem",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px"
+            }}
+          >
+            <Trash2 size={16} /> Manage & Delete Snapshots ({snapshots.length})
+          </button>
+        </div>
+
         {/* Body */}
         <div style={{ padding: "24px" }}>
-          {result ? (
+          {activeTab === "manage" ? (
+            /* Snapshot Management / Deletion Tab */
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                Uploaded schedules stored in the database. You can remove misplaced or out-of-order snapshots anytime:
+              </div>
+
+              {loadingSnapshots ? (
+                <div style={{ padding: "30px", textAlign: "center", color: "var(--text-muted)" }}>
+                  <Loader2 size={24} className="animate-spin" style={{ margin: "0 auto 8px" }} />
+                  Loading snapshot records...
+                </div>
+              ) : snapshots.length === 0 ? (
+                <div style={{ padding: "30px", textAlign: "center", color: "var(--text-muted)", background: "rgba(255, 255, 255, 0.02)", borderRadius: "8px" }}>
+                  No snapshots currently in the database. Use the Upload tab to add one.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "320px", overflowY: "auto" }}>
+                  {snapshots.map((s) => (
+                    <div
+                      key={s.snapshot_id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "12px 16px",
+                        borderRadius: "var(--radius-md)",
+                        background: s.snapshot_id === activeSnapshotId ? "rgba(99, 102, 241, 0.12)" : "rgba(255, 255, 255, 0.02)",
+                        border: s.snapshot_id === activeSnapshotId ? "1px solid rgba(99, 102, 241, 0.4)" : "1px solid var(--border-subtle)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div
+                          style={{
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "6px",
+                            background: s.is_baseline ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: s.is_baseline ? "var(--accent-amber)" : "#38bdf8",
+                            fontWeight: 700,
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          #{s.snapshot_id}
+                        </div>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontWeight: 600, color: "#fff", fontSize: "0.88rem" }}>
+                              {s.project_name || s.source_filename}
+                            </span>
+                            {s.is_baseline ? (
+                              <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--accent-amber)", background: "rgba(245, 158, 11, 0.15)", padding: "2px 6px", borderRadius: "4px" }}>
+                                BASELINE
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: "0.68rem", fontWeight: 600, color: "#38bdf8", background: "rgba(56, 189, 248, 0.15)", padding: "2px 6px", borderRadius: "4px" }}>
+                                UPDATE
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: "0.74rem", color: "var(--text-muted)", display: "flex", gap: "8px", marginTop: "2px" }}>
+                            <span>Data Date: <strong style={{ color: "var(--text-secondary)" }}>{s.data_date}</strong></span>
+                            <span>•</span>
+                            <span>{s.activity_count?.toLocaleString()} tasks</span>
+                            <span>•</span>
+                            <span>{s.relationship_count?.toLocaleString()} links</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <button
+                          onClick={() => handleToggleBaseline(s.snapshot_id, s.is_baseline)}
+                          title={s.is_baseline ? "Unmark as baseline" : "Set as baseline reference"}
+                          style={{
+                            background: "transparent",
+                            border: "1px solid var(--border-subtle)",
+                            borderRadius: "6px",
+                            padding: "6px 10px",
+                            color: s.is_baseline ? "var(--accent-amber)" : "var(--text-muted)",
+                            fontSize: "0.75rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}
+                        >
+                          <Shield size={14} />
+                          {s.is_baseline ? "Baseline" : "Make Baseline"}
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteSnapshot(s.snapshot_id, s.source_filename)}
+                          disabled={deletingId === s.snapshot_id}
+                          title="Delete snapshot"
+                          style={{
+                            background: "rgba(244, 63, 94, 0.1)",
+                            border: "1px solid rgba(244, 63, 94, 0.3)",
+                            borderRadius: "6px",
+                            padding: "6px 10px",
+                            color: "var(--accent-rose)",
+                            fontSize: "0.75rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}
+                        >
+                          {deletingId === s.snapshot_id ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+                <button onClick={onClose} className="button-secondary" style={{ padding: "8px 20px" }}>
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : result ? (
             /* Success Summary View */
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               <div

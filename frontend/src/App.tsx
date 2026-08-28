@@ -71,6 +71,17 @@ export function App() {
     loadDashboardData(summary.snapshot_id);
   };
 
+  const handleSnapshotDeleted = (deletedId: number) => {
+    if (activeSnapshotId === deletedId) {
+      const remaining = snapshots.filter((s) => s.snapshot_id !== deletedId);
+      const nextId = remaining.length > 0 ? remaining[0].snapshot_id : 1;
+      setActiveSnapshotId(nextId);
+      loadDashboardData(nextId);
+    } else {
+      loadDashboardData(activeSnapshotId);
+    }
+  };
+
   const handleReoptimize = async (budget: number) => {
     const res = await apiService.runOptimization(budget);
     setOptimizationData(res);
@@ -166,6 +177,8 @@ export function App() {
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
         onSnapshotIngested={handleSnapshotIngested}
+        onSnapshotDeleted={handleSnapshotDeleted}
+        activeSnapshotId={activeSnapshotId}
       />
     </div>
   );
