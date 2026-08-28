@@ -188,3 +188,31 @@ export interface NLQueryResponse {
   evidence_ledger: EvidenceLedgerEntry[];
   primary_certainty_tier: CertaintyTier;
 }
+
+export interface IngestionSummaryResponse {
+  snapshot_id: number;
+  project_id: number;
+  project_name: string;
+  data_date: string;
+  source_filename: string;
+  is_baseline: boolean;
+  activity_count: number;
+  relationship_count: number;
+  calendar_count: number;
+  is_valid: boolean;
+  validation_errors_count: number;
+  validation_warnings_count: number;
+  message: string;
+}
+
+export interface SnapshotListItem {
+  snapshot_id: number;
+  project_id: number;
+  project_name: string;
+  data_date: string;
+  source_filename: string;
+  is_baseline: boolean;
+  activity_count: number;
+  relationship_count: number;
+  created_at: string;
+}

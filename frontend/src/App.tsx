@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Navbar } from "./components/Navbar";
 import { DriverDashboard } from "./components/DriverDashboard";
 import { RecoveryWorkspace } from "./components/RecoveryWorkspace";
 import { ClassificationQueue } from "./components/ClassificationQueue";
 import { HistoricalTrendView } from "./components/HistoricalTrendView";
 import { AIReasoningAssistant } from "./components/AIReasoningAssistant";
+import { UploadSnapshotModal } from "./components/UploadSnapshotModal";
 import { apiService } from "./services/api";
 import type {
   DriverAnalysisResult,
@@ -14,10 +15,16 @@ import type {
   SnapshotDiff,
   TrendData,
   NarrativeReport,
+  IngestionSummaryResponse,
+  SnapshotListItem,
 } from "./types/api";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<string>("drivers");
+  const [activeSnapshotId, setActiveSnapshotId] = useState<number>(1);
+  const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+
   const [driversData, setDriversData] = useState<DriverAnalysisResult | null>(null);
   const [dcmaData, setDcmaData] = useState<DCMAAssessmentReport | null>(null);
   const [optimizationData, setOptimizationData] = useState<OptimizationResult | null>(null);
@@ -27,33 +34,42 @@ export function App() {
   const [narrativeReport, setNarrativeReport] = useState<NarrativeReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [drivers, dcma, opt, queue, trends, diff, report] = await Promise.all([
-          apiService.getDrivers(1),
-          apiService.getDCMA(1),
-          apiService.runOptimization(100000),
-          apiService.getClassificationQueue(),
-          apiService.getTrends(1),
-          apiService.getSnapshotDiff(2, 3),
-          apiService.getNarrativeReport(1),
-        ]);
-        setDriversData(drivers);
-        setDcmaData(dcma);
-        setOptimizationData(opt);
-        setClassificationQueue(queue);
-        setTrendData(trends);
-        setDiffData(diff);
-        setNarrativeReport(report);
-      } catch (err) {
-        console.error("Error loading dashboard data:", err);
-      } finally {
-        setLoading(false);
-      }
+  const loadDashboardData = useCallback(async (snapId: number) => {
+    setLoading(true);
+    try {
+      const [drivers, dcma, opt, queue, trends, diff, report, snapList] = await Promise.all([
+        apiService.getDrivers(snapId),
+        apiService.getDCMA(snapId),
+        apiService.runOptimization(100000),
+        apiService.getClassificationQueue(),
+        apiService.getTrends(snapId),
+        apiService.getSnapshotDiff(snapId, snapId + 1),
+        apiService.getNarrativeReport(snapId),
+        apiService.listSnapshots(),
+      ]);
+      setDriversData(drivers);
+      setDcmaData(dcma);
+      setOptimizationData(opt);
+      setClassificationQueue(queue);
+      setTrendData(trends);
+      setDiffData(diff);
+      setNarrativeReport(report);
+      setSnapshots(snapList);
+    } catch (err) {
+      console.error("Error loading dashboard data:", err);
+    } finally {
+      setLoading(false);
     }
-    loadData();
   }, []);
+
+  useEffect(() => {
+    loadDashboardData(activeSnapshotId);
+  }, [activeSnapshotId, loadDashboardData]);
+
+  const handleSnapshotIngested = (summary: IngestionSummaryResponse) => {
+    setActiveSnapshotId(summary.snapshot_id);
+    loadDashboardData(summary.snapshot_id);
+  };
 
   const handleReoptimize = async (budget: number) => {
     const res = await apiService.runOptimization(budget);
@@ -107,6 +123,10 @@ export function App() {
         dcmaScore={dcmaData.overall_health_score}
         criticalFloat={driversData.drivers[0]?.driver_total_float_days || 0}
         driverCount={driversData.driver_head_count}
+        onOpenUploadModal={() => setIsUploadModalOpen(true)}
+        activeSnapshotId={activeSnapshotId}
+        onSelectSnapshot={(id) => setActiveSnapshotId(id)}
+        snapshots={snapshots}
       />
 
       {/* Main Workspace View Container */}
@@ -140,6 +160,13 @@ export function App() {
           <AIReasoningAssistant initialReport={narrativeReport} />
         )}
       </main>
+
+      {/* Ingestion & Upload Modal */}
+      <UploadSnapshotModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onSnapshotIngested={handleSnapshotIngested}
+      />
     </div>
   );
 }

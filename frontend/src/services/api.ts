@@ -488,11 +488,47 @@ export const apiService = {
       query,
       intent: "GENERAL_QUERY",
       primary_certainty_tier: "INFERENCE",
-      answer_markdown: `**[INFERENCE] Schedule Diagnostic Result:**\n\nAnalysis for query *"${query}"* shows 48 negative-float activities on the primary critical path. Top driver **QTS-28981** controls project recovery potential.`,
+      answer_markdown: `**[INFERENCE] Schedule Diagnostic Result:**\n\nAnalysis for query *"${query}"* shows negative-float activities on the primary critical path.`,
       retrieved_facts: { total_drivers: 6, critical_float: -18.0 },
       evidence_ledger: [
         { id: 1, claim_text: "Snapshot critical float is -18.0 days", certainty_tier: "FACT", source_entity: "Snapshot#1", metric_name: "critical_float", metric_value: -18.0, created_at: "2026-01-14" },
       ],
     };
   },
+
+  async uploadSnapshot(
+    file: File,
+    orgName: string = "Default Org",
+    projectName?: string,
+    isBaseline: boolean = false
+  ): Promise<any> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("org_name", orgName);
+    if (projectName) formData.append("project_name", projectName);
+    formData.append("is_baseline", String(isBaseline));
+
+    const res = await fetch(`${API_BASE_URL}/snapshots/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+      throw new Error(err.detail || "Failed to upload and ingest snapshot");
+    }
+    return await res.json();
+  },
+
+  async listSnapshots(): Promise<any[]> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/snapshots`);
+      if (res.ok) return await res.json();
+    } catch (_) {}
+    return [
+      { snapshot_id: 1, project_id: 1, project_name: "PHX3DC1", data_date: "2026-01-14", source_filename: "PHX3DC1_Baseline.xer", is_baseline: true, activity_count: 12031, relationship_count: 23368 },
+      { snapshot_id: 2, project_id: 2, project_name: "247011", data_date: "2026-08-12", source_filename: "247011_Update.xer", is_baseline: false, activity_count: 13817, relationship_count: 28462 },
+    ];
+  },
 };
+
+export const api = apiService;

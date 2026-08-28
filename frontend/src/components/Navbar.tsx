@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity, ShieldCheck, Cpu, GitCommit, Bot, Sliders } from "lucide-react";
+import { Activity, ShieldCheck, Cpu, GitCommit, Bot, Sliders, Upload, Layers } from "lucide-react";
 
 interface NavbarProps {
   activeTab: string;
@@ -7,6 +7,10 @@ interface NavbarProps {
   dcmaScore: number;
   criticalFloat: number;
   driverCount: number;
+  onOpenUploadModal: () => void;
+  activeSnapshotId?: number;
+  onSelectSnapshot?: (id: number) => void;
+  snapshots?: any[];
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,6 +19,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   dcmaScore,
   criticalFloat,
   driverCount,
+  onOpenUploadModal,
+  activeSnapshotId = 1,
+  onSelectSnapshot,
+  snapshots = [],
 }) => {
   const navItems = [
     { id: "drivers", label: "Driver Diagnostics", icon: Activity },
@@ -40,7 +48,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: "24px"
+        gap: "20px"
       }}>
         {/* Brand & Active Schedule */}
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
@@ -119,6 +127,57 @@ export const Navbar: React.FC<NavbarProps> = ({
             );
           })}
         </nav>
+
+        {/* Snapshot Ingestion Action Button */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {snapshots.length > 0 && onSelectSnapshot && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Layers size={15} color="var(--text-muted)" />
+              <select
+                value={activeSnapshotId}
+                onChange={(e) => onSelectSnapshot(Number(e.target.value))}
+                style={{
+                  background: "rgba(255, 255, 255, 0.04)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "#fff",
+                  padding: "6px 10px",
+                  fontSize: "0.78rem",
+                  outline: "none",
+                  cursor: "pointer"
+                }}
+              >
+                {snapshots.map((s) => (
+                  <option key={s.snapshot_id} value={s.snapshot_id} style={{ background: "#111827", color: "#fff" }}>
+                    Snap #{s.snapshot_id} ({s.data_date || s.project_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={onOpenUploadModal}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 16px",
+              borderRadius: "var(--radius-md)",
+              background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              color: "#fff",
+              fontSize: "0.85rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              boxShadow: "0 4px 12px rgba(99, 102, 241, 0.35)",
+              transition: "all 0.2s ease"
+            }}
+          >
+            <Upload size={16} />
+            Upload .XER
+          </button>
+        </div>
       </div>
     </header>
   );
