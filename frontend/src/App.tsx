@@ -37,15 +37,27 @@ export function App() {
   const loadDashboardData = useCallback(async (snapId: number) => {
     setLoading(true);
     try {
-      const [drivers, dcma, opt, queue, trends, diff, report, snapList] = await Promise.all([
-        apiService.getDrivers(snapId),
-        apiService.getDCMA(snapId),
+      const snapList = await apiService.listSnapshots();
+      setSnapshots(snapList);
+
+      const effectiveSnapId = snapList.some((s) => s.snapshot_id === snapId)
+        ? snapId
+        : snapList.length > 0
+        ? snapList[0].snapshot_id
+        : snapId;
+
+      const currentSnap = snapList.find((s) => s.snapshot_id === effectiveSnapId);
+      const sameProjectSnaps = snapList.filter((s) => currentSnap && s.project_id === currentSnap.project_id);
+      const priorSnap = sameProjectSnaps.find((s) => s.snapshot_id < effectiveSnapId);
+
+      const [drivers, dcma, opt, queue, trends, diff, report] = await Promise.all([
+        apiService.getDrivers(effectiveSnapId),
+        apiService.getDCMA(effectiveSnapId),
         apiService.runOptimization(100000),
         apiService.getClassificationQueue(),
-        apiService.getTrends(snapId),
-        apiService.getSnapshotDiff(snapId, snapId + 1),
-        apiService.getNarrativeReport(snapId),
-        apiService.listSnapshots(),
+        apiService.getTrends(effectiveSnapId),
+        apiService.getSnapshotDiff(priorSnap?.snapshot_id, effectiveSnapId),
+        apiService.getNarrativeReport(effectiveSnapId),
       ]);
       setDriversData(drivers);
       setDcmaData(dcma);
@@ -54,7 +66,6 @@ export function App() {
       setTrendData(trends);
       setDiffData(diff);
       setNarrativeReport(report);
-      setSnapshots(snapList);
     } catch (err) {
       console.error("Error loading dashboard data:", err);
     } finally {

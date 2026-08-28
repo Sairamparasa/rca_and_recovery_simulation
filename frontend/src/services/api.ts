@@ -278,94 +278,6 @@ const MOCK_CLASSIFICATION_QUEUE: RelationshipClassification[] = [
   },
 ];
 
-const MOCK_TRENDS: TrendData = {
-  project_id: 1,
-  snapshots: [
-    { snapshot_id: 1, data_date: "2025-11-01", driver_count: 2, dcma_health_score: 98.2, critical_path_float_days: 0.0 },
-    { snapshot_id: 2, data_date: "2025-12-01", driver_count: 3, dcma_health_score: 96.0, critical_path_float_days: -5.0 },
-    { snapshot_id: 3, data_date: "2026-01-14", driver_count: 6, dcma_health_score: 92.8, critical_path_float_days: -18.0 },
-  ],
-  float_trends: [
-    {
-      task_code: "QTS-28981",
-      name: "Underground MV Ductbank",
-      history: [
-        { snapshot_id: 1, data_date: "2025-11-01", total_float_days: 0.0 },
-        { snapshot_id: 2, data_date: "2025-12-01", total_float_days: -6.0 },
-        { snapshot_id: 3, data_date: "2026-01-14", total_float_days: -18.0 },
-      ],
-    },
-    {
-      task_code: "QTS-29661",
-      name: "Main Substation Feeder",
-      history: [
-        { snapshot_id: 1, data_date: "2025-11-01", total_float_days: 4.0 },
-        { snapshot_id: 2, data_date: "2025-12-01", total_float_days: -2.0 },
-        { snapshot_id: 3, data_date: "2026-01-14", total_float_days: -15.0 },
-      ],
-    },
-    {
-      task_code: "QTS-29751",
-      name: "Transformer Bay 2 Foundations",
-      history: [
-        { snapshot_id: 1, data_date: "2025-11-01", total_float_days: 2.0 },
-        { snapshot_id: 2, data_date: "2025-12-01", total_float_days: 0.0 },
-        { snapshot_id: 3, data_date: "2026-01-14", total_float_days: -12.0 },
-      ],
-    },
-  ],
-  milestone_slippage: [
-    {
-      milestone_code: "M_ENERGIZATION",
-      name: "Substation Energization",
-      baseline_finish: "2026-05-28",
-      current_finish: "2026-06-16",
-      slippage_days: 18.0,
-      trend_history: [
-        { snapshot_id: 1, data_date: "2025-11-01", forecast_finish: "2026-05-28", slippage_days: 0.0 },
-        { snapshot_id: 2, data_date: "2025-12-01", forecast_finish: "2026-06-03", slippage_days: 6.0 },
-        { snapshot_id: 3, data_date: "2026-01-14", forecast_finish: "2026-06-16", slippage_days: 18.0 },
-      ],
-    },
-    {
-      milestone_code: "M_COMMISSIONING",
-      name: "Phase 1 Integrated Commissioning",
-      baseline_finish: "2026-10-31",
-      current_finish: "2026-11-20",
-      slippage_days: 20.0,
-      trend_history: [
-        { snapshot_id: 1, data_date: "2025-11-01", forecast_finish: "2026-10-31", slippage_days: 0.0 },
-        { snapshot_id: 2, data_date: "2025-12-01", forecast_finish: "2026-11-07", slippage_days: 7.0 },
-        { snapshot_id: 3, data_date: "2026-01-14", forecast_finish: "2026-11-20", slippage_days: 20.0 },
-      ],
-    },
-  ],
-};
-
-const MOCK_DIFF: SnapshotDiff = {
-  snapshot_id_a: 2,
-  snapshot_id_b: 3,
-  added_relationships: [
-    { predecessor_code: "QTS-31040", successor_code: "QTS-31120", relationship_type: "FS", lag: 0 },
-  ],
-  removed_relationships: [],
-  modified_relationships: [
-    { predecessor_code: "QTS-28981", successor_code: "QTS-29661", old_lag: 0, new_lag: 2 },
-  ],
-  duration_changes: [
-    { task_code: "QTS-28981", old_duration: 35, new_duration: 45, delta_days: 10 },
-    { task_code: "QTS-29661", old_duration: 25, new_duration: 30, delta_days: 5 },
-  ],
-  constraint_changes: [
-    { task_code: "QTS-29661", old_constraint: null, new_constraint: "CS_MANDFIN", old_date: null, new_date: "2026-06-15" },
-  ],
-  driver_churn: {
-    new_drivers: ["QTS-31040", "QTS-32100"],
-    resolved_drivers: ["QTS-27500"],
-    persistent_drivers: ["QTS-28981", "QTS-29661", "QTS-29751"],
-  },
-};
-
 export const apiService = {
   async getDrivers(snapshotId: number = 1): Promise<DriverAnalysisResult> {
     try {
@@ -418,17 +330,64 @@ export const apiService = {
   async getTrends(snapshotId: number = 1): Promise<TrendData> {
     try {
       const res = await fetch(`${API_BASE_URL}/snapshots/${snapshotId}/trend`);
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const json = await res.json();
+        const floatTrends = (json.driver_float_trends || []).map((t: any) => ({
+          task_code: t.task_code,
+          name: t.name || t.task_code,
+          history: (t.points || []).map((p: any) => ({
+            snapshot_id: p.snapshot_id,
+            data_date: p.data_date,
+            total_float_days: p.total_float_days ?? p.float_days ?? 0,
+          })),
+        }));
+
+        const snapshots = (json.snapshots || []).map((s: any) => ({
+          snapshot_id: s.snapshot_id,
+          data_date: s.data_date,
+          driver_count: s.driver_count || s.driver_head_count || 0,
+          dcma_health_score: s.dcma_health_score || s.overall_health_score || 0,
+          critical_path_float_days: s.critical_path_float_days || s.critical_float || 0,
+        }));
+
+        return {
+          project_id: json.project_id || 1,
+          snapshots,
+          float_trends: floatTrends,
+          milestone_slippage: json.milestone_trends || [],
+        };
+      }
     } catch (_) {}
-    return MOCK_TRENDS;
+
+    return {
+      project_id: 1,
+      snapshots: [],
+      float_trends: [],
+      milestone_slippage: [],
+    };
   },
 
-  async getSnapshotDiff(snapA: number = 2, snapB: number = 3): Promise<SnapshotDiff> {
-    try {
-      const res = await fetch(`${API_BASE_URL}/snapshots/${snapB}/diff?baseline_snapshot_id=${snapA}`);
-      if (res.ok) return await res.json();
-    } catch (_) {}
-    return MOCK_DIFF;
+  async getSnapshotDiff(snapA?: number, snapB?: number): Promise<SnapshotDiff> {
+    if (snapA && snapB && snapA !== snapB) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/snapshots/${snapB}/diff?baseline_snapshot_id=${snapA}`);
+        if (res.ok) return await res.json();
+      } catch (_) {}
+    }
+    return {
+      snapshot_id_a: snapA || 0,
+      snapshot_id_b: snapB || 0,
+      added_relationships: [],
+      removed_relationships: [],
+      modified_relationships: [],
+      duration_changes: [],
+      constraint_changes: [],
+      driver_churn: {
+        new_drivers: [],
+        resolved_drivers: [],
+        persistent_drivers: [],
+      },
+    };
   },
 
   async getNarrativeReport(snapshotId: number = 1): Promise<NarrativeReport> {

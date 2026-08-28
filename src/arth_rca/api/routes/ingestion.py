@@ -209,7 +209,7 @@ def list_snapshots(db: Session = Depends(get_db)):
 def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
     """
     Deletes an uploaded snapshot and all its associated activities, relationships,
-    DCMA health checks, and driver records.
+    DCMA health checks, scenarios, and driver records.
     Useful when a schedule was uploaded in the wrong sequence or contains erroneous data.
     """
     snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
@@ -217,30 +217,52 @@ def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Snapshot with ID {snapshot_id} not found.")
 
     try:
-        # 1. Fetch activity IDs for this snapshot
+        from arth_rca.db.models import (
+            ActivityResource,
+            DCMAHealthCheck,
+            DriverRecord,
+            DrivingChain,
+            Scenario,
+            EvidenceLedgerEntry,
+        )
+
+        # 1. Fetch driver record IDs
+        driver_records = db.query(DriverRecord).filter(DriverRecord.snapshot_id == snapshot_id).all()
+        dr_ids = [dr.id for dr in driver_records if dr.id is not None]
+
+        if dr_ids:
+            # Delete evidence ledger entries for these drivers
+            db.query(EvidenceLedgerEntry).filter(EvidenceLedgerEntry.driver_record_id.in_(dr_ids)).delete(synchronize_session=False)
+            # Delete driving chains
+            db.query(DrivingChain).filter(DrivingChain.driver_record_id.in_(dr_ids)).delete(synchronize_session=False)
+            # Delete driver records
+            db.query(DriverRecord).filter(DriverRecord.id.in_(dr_ids)).delete(synchronize_session=False)
+
+        # 2. Delete Scenarios associated with this snapshot
+        scenarios = db.query(Scenario).filter(Scenario.baseline_snapshot_id == snapshot_id).all()
+        scen_ids = [sc.id for sc in scenarios if sc.id is not None]
+        if scen_ids:
+            db.query(EvidenceLedgerEntry).filter(EvidenceLedgerEntry.scenario_id.in_(scen_ids)).delete(synchronize_session=False)
+            db.query(Scenario).filter(Scenario.id.in_(scen_ids)).delete(synchronize_session=False)
+
+        # 3. Fetch activity IDs for this snapshot
         activities = db.query(Activity).filter(Activity.snapshot_id == snapshot_id).all()
         act_ids = [a.id for a in activities if a.id is not None]
 
-        # 2. Delete ActivityResource records
+        # 4. Delete ActivityResource records
         if act_ids:
-            from arth_rca.db.models import ActivityResource
             db.query(ActivityResource).filter(ActivityResource.activity_id.in_(act_ids)).delete(synchronize_session=False)
 
-        # 3. Delete Relationships
+        # 5. Delete Relationships
         db.query(Relationship).filter(Relationship.snapshot_id == snapshot_id).delete(synchronize_session=False)
 
-        # 4. Delete Activities
+        # 6. Delete Activities
         db.query(Activity).filter(Activity.snapshot_id == snapshot_id).delete(synchronize_session=False)
 
-        # 5. Delete DCMAHealthChecks
-        from arth_rca.db.models import DCMAHealthCheck
+        # 7. Delete DCMAHealthChecks
         db.query(DCMAHealthCheck).filter(DCMAHealthCheck.snapshot_id == snapshot_id).delete(synchronize_session=False)
 
-        # 6. Delete DriverRecords
-        from arth_rca.db.models import DriverRecord
-        db.query(DriverRecord).filter(DriverRecord.snapshot_id == snapshot_id).delete(synchronize_session=False)
-
-        # 7. Delete Snapshot
+        # 8. Delete Snapshot
         db.delete(snap)
         db.commit()
 
