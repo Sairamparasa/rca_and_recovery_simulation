@@ -365,36 +365,49 @@ Provide a concise, direct, professional response answering the question strictly
         max_tokens=600,
     )
 
-    # Ensure offline fallback is formatted cleanly with certainty tier
+    # Structural Runtime Grounding Validation
+    from arth_rca.reasoning.grounding_validator import validate_and_sanitize_grounding
+    ledger_entries = ledger.get_entries()
+
+    # Construct deterministic fallback
+    if intent == QueryIntent.DRIVER_WHY_DELAYED and "activity" in retrieved_facts:
+        act_info = retrieved_facts["activity"]
+        deterministic_fallback = (
+            f"[{primary_tier.value}] Activity **{act_info['task_code']}** ({act_info['name']}) has "
+            f"**{act_info['total_float']} days** of total float. "
+            f"Remaining duration is **{act_info['remaining_duration']} days** (Status: {act_info['status']}). "
+            f"Constraint applied: {act_info['constraint_type'] or 'None'}."
+        )
+    elif intent == QueryIntent.DCMA_HEALTH:
+        deterministic_fallback = (
+            f"[{primary_tier.value}] The project DCMA Schedule Health Score is **{retrieved_facts.get('dcma_overall_health_score')}%**. "
+            f"Out of 14 standard metrics, **{retrieved_facts.get('dcma_failed_checks_count')}** check(s) flagged compliance anomalies."
+        )
+    elif intent == QueryIntent.TOP_DRIVERS:
+        drivers = retrieved_facts.get("top_drivers", [])
+        drv_lines = "\n".join([f"- [{primary_tier.value}] **{d['task_code']}** ({d['name']}): {d['total_float_days']}d float, blast radius {d['blast_radius_impacted_count']} tasks." for d in drivers])
+        deterministic_fallback = (
+            f"[{primary_tier.value}] Identified **{retrieved_facts.get('driver_head_count')}** driver heads affecting "
+            f"**{retrieved_facts.get('total_negative_float_tasks')}** negative float tasks.\n\n{drv_lines}"
+        )
+    else:
+        deterministic_fallback = f"[{primary_tier.value}] Schedule analysis for snapshot {snap.id} (Data Date: {snap.data_date.strftime('%Y-%m-%d')})."
+
     if "[Grounded Response" in synthesized_markdown or len(synthesized_markdown.strip()) < 10:
-        if intent == QueryIntent.DRIVER_WHY_DELAYED and "activity" in retrieved_facts:
-            act_info = retrieved_facts["activity"]
-            synthesized_markdown = (
-                f"[{primary_tier.value}] Activity **{act_info['task_code']}** ({act_info['name']}) has "
-                f"**{act_info['total_float']} days** of total float. "
-                f"Remaining duration is **{act_info['remaining_duration']} days** (Status: {act_info['status']}). "
-                f"Constraint applied: {act_info['constraint_type'] or 'None'}."
-            )
-        elif intent == QueryIntent.DCMA_HEALTH:
-            synthesized_markdown = (
-                f"[{primary_tier.value}] The project DCMA Schedule Health Score is **{retrieved_facts.get('dcma_overall_health_score')}%**. "
-                f"Out of 14 standard metrics, **{retrieved_facts.get('dcma_failed_checks_count')}** check(s) flagged compliance anomalies."
-            )
-        elif intent == QueryIntent.TOP_DRIVERS:
-            drivers = retrieved_facts.get("top_drivers", [])
-            drv_lines = "\n".join([f"- [{primary_tier.value}] **{d['task_code']}** ({d['name']}): {d['total_float_days']}d float, blast radius {d['blast_radius_impacted_count']} tasks." for d in drivers])
-            synthesized_markdown = (
-                f"[{primary_tier.value}] Identified **{retrieved_facts.get('driver_head_count')}** driver heads affecting "
-                f"**{retrieved_facts.get('total_negative_float_tasks')}** negative float tasks.\n\n{drv_lines}"
-            )
-        else:
-            synthesized_markdown = f"[{primary_tier.value}] Schedule analysis for snapshot {snap.id} (Data Date: {snap.data_date.strftime('%Y-%m-%d')})."
+        synthesized_markdown = deterministic_fallback
+
+    v_res = validate_and_sanitize_grounding(
+        text=synthesized_markdown,
+        ledger_entries=ledger_entries,
+        field_name="nl_query_answer",
+        fallback_deterministic_text=deterministic_fallback,
+    )
 
     return NLQueryResponse(
         query=request.query,
         intent=intent,
-        answer_markdown=synthesized_markdown,
+        answer_markdown=v_res.sanitized_text,
         primary_certainty_tier=primary_tier,
         retrieved_facts=retrieved_facts,
-        citations=ledger.get_entries(),
+        citations=ledger_entries,
     )

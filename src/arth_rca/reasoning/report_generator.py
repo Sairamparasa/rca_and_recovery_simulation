@@ -182,10 +182,14 @@ Structure your report into 3 distinct sections:
         max_tokens=2000,
     )
 
-    # 4. Fallback formatting if raw response is minimal
-    exec_summary = f"[FACT] Snapshot data date: {data_date.strftime('%Y-%m-%d')}. [INFERENCE] Total negative float activities: {driver_result.total_negative_float_activities} across {driver_result.driver_head_count} primary driver heads. [FACT] Overall DCMA Health Score is {dcma_report.overall_health_score}%."
-    dcma_narrative = f"[FACT] Schedule Health Score: {dcma_report.overall_health_score}%. {len([m for m in dcma_report.metrics if not m.passed])} out of 14 checks flagged compliance issues."
-    driver_narrative = f"[INFERENCE] Top driver head {top_drivers_facts[0]['driver_task_code'] if top_drivers_facts else 'N/A'} carries {top_drivers_facts[0]['total_float_days'] if top_drivers_facts else 0.0}d float and impacts {top_drivers_facts[0]['impacted_downstream_count'] if top_drivers_facts else 0} downstream tasks."
+    # 4. Fallback formatting if raw response is minimal or invalid
+    fallback_exec = f"[FACT] Snapshot data date: {data_date.strftime('%Y-%m-%d')}. [INFERENCE] Total negative float activities: {driver_result.total_negative_float_activities} across {driver_result.driver_head_count} primary driver heads. [FACT] Overall DCMA Health Score is {dcma_report.overall_health_score}%."
+    fallback_dcma = f"[FACT] Schedule Health Score: {dcma_report.overall_health_score}%. {len([m for m in dcma_report.metrics if not m.passed])} out of 14 checks flagged compliance issues."
+    fallback_driver = f"[INFERENCE] Top driver head {top_drivers_facts[0]['driver_task_code'] if top_drivers_facts else 'N/A'} carries {top_drivers_facts[0]['total_float_days'] if top_drivers_facts else 0.0}d float and impacts {top_drivers_facts[0]['impacted_downstream_count'] if top_drivers_facts else 0} downstream tasks."
+
+    exec_summary = fallback_exec
+    dcma_narrative = fallback_dcma
+    driver_narrative = fallback_driver
 
     if "## Executive Summary" in raw_report:
         parts = raw_report.split("## ")
@@ -197,14 +201,28 @@ Structure your report into 3 distinct sections:
             elif p.startswith("Critical Path"):
                 driver_narrative = p.replace("Critical Path Drivers & Root-Cause Diagnostics", "").strip()
 
+    # Structural Runtime Grounding Validation
+    from arth_rca.reasoning.grounding_validator import validate_and_sanitize_grounding
+    ledger_entries = ledger.get_entries()
+
+    v_exec = validate_and_sanitize_grounding(exec_summary, ledger_entries, "executive_summary", fallback_deterministic_text=fallback_exec)
+    v_dcma = validate_and_sanitize_grounding(dcma_narrative, ledger_entries, "dcma_health", fallback_deterministic_text=fallback_dcma)
+    v_driver = validate_and_sanitize_grounding(driver_narrative, ledger_entries, "drivers_diagnostic", fallback_deterministic_text=fallback_driver)
+
+    exec_summary = v_exec.sanitized_text
+    dcma_narrative = v_dcma.sanitized_text
+    driver_narrative = v_driver.sanitized_text
+
     trends_narrative = None
     if diff_result:
-        trends_narrative = (
+        fallback_trends = (
             f"[FACT] Compared to prior snapshot ({diff_result.snapshot_a_data_date.strftime('%Y-%m-%d') if diff_result.snapshot_a_data_date else 'Baseline'}), "
             f"[INFERENCE] Net project finish slippage is {round(diff_result.project_finish_slippage_days, 1)} days. "
             f"[FACT] Modifications: {diff_result.modified_activities_count} activities modified, {diff_result.added_relationships_count} relationships added. "
             f"[INFERENCE] Driver churn: {len(diff_result.driver_churn.new_drivers)} new, {len(diff_result.driver_churn.resolved_drivers)} resolved, {len(diff_result.driver_churn.persistent_drivers)} persistent."
         )
+        v_trends = validate_and_sanitize_grounding(fallback_trends, ledger_entries, "trends", fallback_deterministic_text=fallback_trends)
+        trends_narrative = v_trends.sanitized_text
 
     return NarrativeReportPayload(
         snapshot_id=snapshot_id,
@@ -214,6 +232,6 @@ Structure your report into 3 distinct sections:
         dcma_health_narrative=dcma_narrative,
         critical_path_and_drivers_narrative=driver_narrative,
         snapshot_trends_narrative=trends_narrative,
-        evidence_ledger=ledger.get_entries(),
+        evidence_ledger=ledger_entries,
         unresolved_hypotheses=unresolved_hypotheses,
     )
