@@ -128,6 +128,36 @@ def get_classification_review_queue(
     return queue[:limit]
 
 
+@router.get("/relationships/classification-queue", response_model=List[ClassificationResult])
+@router.get("/snapshots/{snapshot_id}/classification-queue", response_model=List[ClassificationResult])
+def get_snapshot_classification_queue(
+    snapshot_id: Optional[int] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """Convenience endpoint resolving project_id directly from snapshot_id or active snapshot."""
+    if snapshot_id:
+        snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
+    else:
+        snap = db.query(Snapshot).order_by(Snapshot.id.desc()).first()
+
+    if not snap:
+        return []
+    return get_classification_review_queue(project_id=snap.project_id, snapshot_id=snap.id, limit=limit, db=db)
+
+
+@router.post("/relationships/{relationship_key}/classify", response_model=ClassificationResult)
+def submit_classification_direct(
+    relationship_key: str,
+    req: ClassifyRequest,
+    db: Session = Depends(get_db),
+):
+    """Direct classification submission without requiring explicit project_id in route path."""
+    snap = db.query(Snapshot).order_by(Snapshot.id.desc()).first()
+    proj_id = snap.project_id if snap else 1
+    return submit_classification(project_id=proj_id, relationship_key=relationship_key, req=req, db=db)
+
+
 @router.post("/projects/{project_id}/relationships/{relationship_key}/classify", response_model=ClassificationResult)
 def submit_classification(
     project_id: int,

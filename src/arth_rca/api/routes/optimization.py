@@ -140,3 +140,29 @@ def run_optimization_api(
     )
 
     return result
+
+
+@router.post("/scenarios/optimize", response_model=OptimizationResult)
+def run_optimization_direct(
+    req: OptimizationRequest,
+    db: Session = Depends(get_db),
+):
+    """Direct recovery optimization endpoint resolving project_id from snapshot."""
+    snap = db.query(Snapshot).filter(Snapshot.id == req.snapshot_id).first()
+    if not snap:
+        snap = db.query(Snapshot).order_by(Snapshot.id.desc()).first()
+    if not snap:
+        raise HTTPException(status_code=404, detail="No snapshots available for optimization.")
+    req.snapshot_id = snap.id
+    return run_optimization_api(project_id=snap.project_id, req=req, db=db)
+
+
+@router.post("/snapshots/{snapshot_id}/optimize", response_model=OptimizationResult)
+def run_snapshot_optimization(
+    snapshot_id: int,
+    req: OptimizationRequest,
+    db: Session = Depends(get_db),
+):
+    """Snapshot-specific recovery optimization endpoint."""
+    req.snapshot_id = snapshot_id
+    return run_optimization_direct(req=req, db=db)

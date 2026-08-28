@@ -24,6 +24,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectSnapshot,
   snapshots = [],
 }) => {
+  const activeSnap = snapshots.find((s) => s.snapshot_id === activeSnapshotId);
+
   const navItems = [
     { id: "drivers", label: "Driver Diagnostics", icon: Activity },
     { id: "recovery", label: "Recovery & Pareto", icon: Sliders },
@@ -67,7 +69,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 ARTH <span style={{ color: "#818cf8", fontWeight: 400 }}>RCA & Simulation</span>
               </div>
               <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "flex", gap: "6px" }}>
-                <span>PHX3 Data Center Phase 1</span> • <span style={{ color: "#38bdf8" }}>2026-01-14 (Baseline)</span>
+                <span>{activeSnap?.project_name || "Active Project"}</span> • <span style={{ color: "#38bdf8" }}>{activeSnap?.data_date || "Live Snapshot"} {activeSnap?.is_baseline ? "(Baseline)" : "(Update)"}</span>
               </div>
             </div>
           </div>
